@@ -29,13 +29,13 @@ TYPES = [("motorway", ("motorway", "motorway_link")), ("trunk", ("trunk", "trunk
          ("driveway", ()), ("parking_aisle", ()), ("track", ("track",)), ("pedestrian", ("pedestrian",)),
          ("cycleway", ("cycleway",)), ("footway", ("footway", "path", "steps", "bridleway"))]
 TYPE_IDS = [t for t, _ in TYPES]
-OFF_BY_DEFAULT = ("driveway", "parking_aisle")
+OFF_BY_DEFAULT = ("service", "driveway", "parking_aisle", "track", "pedestrian", "cycleway", "footway")   # default: roads for cars
 CELL = 1000                     # m: the squares of the map layer
 SRIDS = (3035, 54009)           # coordinate systems of the population grids (catalog.POPULATION)
 
 # SQL: type number (index in TYPES) and lanes of a line l of planet_osm_line
 TYPE_SQL = "CASE " + " ".join(
-    f"WHEN l.highway = 'service' AND l.service = '{t}' THEN {i}" for i, t in enumerate(TYPE_IDS) if t in OFF_BY_DEFAULT
+    f"WHEN l.highway = 'service' AND l.service = '{t}' THEN {i}" for i, t in enumerate(TYPE_IDS) if t in ("driveway", "parking_aisle")
 ) + " " + " ".join(f"WHEN l.highway IN ({', '.join(repr(h) for h in hs)}) THEN {i}" for i, (_, hs) in enumerate(TYPES) if hs) + " END"
 _ONEWAY = "(l.oneway IN ('yes', '1', 'true', '-1') OR l.highway IN ('motorway', 'motorway_link') OR l.tags -> 'junction' = 'roundabout')"
 _BIG = "l.highway IN ('motorway', 'trunk')"

@@ -141,6 +141,12 @@ def job_status():
     return {"title": JOB["title"], "state": state, "pct": 100 if state == "done" else int(prog[1]), "text": text}
 
 
+@router.get("/job")
+def job():
+    """The current / last job only (cheap: the app asks every few seconds while one runs)."""
+    return job_status()
+
+
 @router.post("/job/cancel")
 def cancel():
     if JOB and JOB["proc"].poll() is None:
@@ -166,7 +172,8 @@ def osm_build(req: Regions):
     ids = [i for i in ids if not any(i.startswith(o + "/") for o in ids)]
     if not ids:
         raise HTTPException(400, "Choose at least one region.")
-    return start("Build map data", "pipeline.osm", "build", *ids)
+    names = {r["id"]: r["name"] for r in catalog.osm_regions()}
+    return start("Map: " + ", ".join(names.get(i, i) for i in ids), "pipeline.osm", "build", *ids)
 
 
 @router.post("/osm/update")

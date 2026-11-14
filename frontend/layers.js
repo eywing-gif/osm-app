@@ -165,7 +165,18 @@ const ROAD_TYPES = [["motorway", "Motorway"], ["trunk", "Trunk"], ["primary", "P
   ["unclassified", "Unclassified"], ["residential", "Residential"], ["living_street", "Living street"], ["service", "Service"],
   ["driveway", "Driveway"], ["parking_aisle", "Parking aisle"], ["track", "Track"], ["pedestrian", "Pedestrian"], ["cycleway", "Cycleway"], ["footway", "Footway, path"]];
 const roadName = Object.fromEntries(ROAD_TYPES);
-const roadSel = new Set(store.get("roadTypes", ROAD_TYPES.map(t => t[0]).filter(t => t !== "driveway" && t !== "parking_aisle")));
+const ROAD_HINT = {     // tooltip in the Roads list (OSM highway=*)
+  motorway: "Autobahn, incl. ramps", trunk: "Expressway below motorway: Kraftfahrstraße, dual-carriageway Bundesstraße",
+  primary: "Main road between towns, usually Bundesstraße", secondary: "Regional road, usually Landesstraße",
+  tertiary: "Local connector, usually Kreisstraße / main street in town", unclassified: "Minor public road, e.g. between villages",
+  residential: "Street in a residential area", living_street: "Verkehrsberuhigter Bereich (walking pace)",
+  service: "Access road to a site: company yard, petrol station, alley", driveway: "Driveway to a house or garage",
+  parking_aisle: "Lane inside a car park", track: "Farm or forest track", pedestrian: "Pedestrian zone",
+  cycleway: "Separate cycle path", footway: "Footway, path, steps",
+};
+// default: roads for cars only (no service roads, driveways, parking aisles, tracks, foot- and cycleways)
+const ROAD_OFF = ["service", "driveway", "parking_aisle", "track", "pedestrian", "cycleway", "footway"];
+const roadSel = new Set(store.get("roadTypes3", ROAD_TYPES.map(t => t[0]).filter(t => !ROAD_OFF.includes(t))));
 let roadPer = store.get("roadPer", "area");          // area: lane-km per km² · person: lane-m per inhabitant
 const ROAD_SCALE = ["#fff7ec", "#fdd49e", "#fc8d59", "#d7301f", "#7f0000", "#2b0000"];
 const ROAD_RANGE = { area: [2, 500], person: [1, 300] };

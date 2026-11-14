@@ -18,8 +18,8 @@
     data = await (await fetch(API + "/datasets")).json();
     if (resetSel) sel = new Set(data.osm.built);
     render();
-    if (data.job?.state === "running") { wasRunning = true; clearTimeout(poll); poll = setTimeout(() => load(false), 1500); }
-    else if (wasRunning) { wasRunning = false; sel = new Set(data.osm.built); render(); window.dataChanged?.(); }
+    if (data.job?.state === "running") { wasRunning = true; clearTimeout(poll); poll = setTimeout(() => isOpen() && load(false), 1500); }
+    else if (wasRunning) { wasRunning = false; sel = new Set(data.osm.built); render(); }
   }
 
   const busy = () => data.job?.state === "running";
@@ -70,7 +70,7 @@
     const same = sel.size === data.osm.built.length && data.osm.built.every(i => sel.has(i));
     const miss = [...sel].map(i => data.osm.regions.find(r => r.id === i)).filter(r => r && !r.bytes);
     const missing = miss.length, missSize = miss.reduce((a, r) => a + (r.est || 0), 0);
-    $("set-body").innerHTML = `<div class="empty" style="padding:0 0 6px">Map data for search, point info, tracks. Pick regions, then Apply.</div><input class="search" placeholder="Search region" value="${esc(filter)}" data-a="filter">${osmRows()}`;
+    $("set-body").innerHTML = `<div class="empty" style="padding:0 0 6px">Map data for search, point info, roads. Download adds a region to the map; or tick several, then Apply.</div><input class="search" placeholder="Search region" value="${esc(filter)}" data-a="filter">${osmRows()}`;
     $("set-apply").innerHTML = `<span>${data.osm.built.length ? "Active: " + data.osm.built.map(i => esc(data.osm.regions.find(r => r.id === i)?.name ?? i)).join(", ") : "No map data"}</span>
       ${data.osm.built.length && !data.osm.roads ? `<button class="btn" data-a="roads" title="Needed for the Road lanes layer" ${busy() ? "disabled" : ""}>Prepare roads</button>` : ""}
       ${data.osm.built.length ? `<button class="btn" data-a="osmupd" title="Newest map data for the regions in use" ${busy() ? "disabled" : ""}>Update</button>` : ""}
@@ -143,7 +143,7 @@
       return setTimeout(() => location.reload(), 4000);
     }
     if (a === "cancel") await call("POST", "/job/cancel");
-    else if (a === "get") await call("POST", "/osm/download", { regions: [id] });
+    else if (a === "get") await call("POST", "/osm/build", { regions: [...new Set([...data.osm.built, id])] });   // download and build with the regions in use
     else if (a === "apply") await call("POST", "/osm/build", { regions: [...sel] });
     else if (a === "roads") await call("POST", "/osm/roads");
     else if (a === "osmupd") { if (!confirm("Download the newest map data and build it again?")) return; await call("POST", "/osm/update", { regions: data.osm.built }); }
@@ -153,6 +153,38 @@
     else if (a === "rm") { if (!confirm("Delete?")) return; await call("DELETE", `/${tab}/${id}`); window.dataChanged?.(); }
     else return;
     load(false);
+    watchJob();
+  }
+
+  // the running job, also while Settings is closed: a message when it is finished
+  const isOpen = () => $("settings").classList.contains("open");
+  let watching = false, jobWasRunning = false;
+  async function watchJob() {
+    if (watching) return;
+    watching = true;
+    try {
+      for (;;) {
+        const j = await (await fetch(API + "/datasets/job")).json().catch(() => null);
+        if (j?.state === "running") { jobWasRunning = true; await new Promise(r => setTimeout(r, 2000)); continue; }
+        if (jobWasRunning && j) {
+          jobWasRunning = false;
+          toast(j.state === "done" ? `✓ ${j.title} – ready` : `${j.title} – ${j.state}${j.state === "failed" ? ": " + j.text : ""}`, j.state !== "done");
+          window.dataChanged?.();
+          if (isOpen()) load(false);
+        }
+        break;
+      }
+    } finally { watching = false; }
+  }
+  function toast(text, bad) {
+    let t = $("toast");
+    if (!t) { t = document.createElement("div"); t.id = "toast"; t.setAttribute("role", "status"); document.body.append(t); }
+    t.className = bad ? "bad" : "";
+    t.innerHTML = `<span>${esc(text)}</span><button type="button" aria-label="Close">×</button>`;
+    t.hidden = false;
+    t.lastElementChild.onclick = () => { t.hidden = true; };
+    clearTimeout(t.timer);
+    if (!bad) t.timer = setTimeout(() => { t.hidden = true; }, 15000);
   }
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -172,6 +204,7 @@
     s.addEventListener("input", e => { if (e.target.dataset.a === "filter") { filter = e.target.value; render(); } });
     document.addEventListener("keydown", e => { if (e.key === "Escape" && s.classList.contains("open")) close(); });
     $("settings-btn").addEventListener("click", () => { s.classList.add("open"); load(true); });
+    watchJob();          // a job may still be running from before (e.g. the window was reloaded)
   });
   function close() { $("settings").classList.remove("open"); }
 })();

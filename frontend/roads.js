@@ -37,8 +37,8 @@ function showRoads() {
     ${row("Per km²", num(d.area_km2 ? lane / d.area_km2 : null, 1, " lane-km"), `Area ${fmt(d.area_km2, 2)} km²`)}
     ${row("Per person", d.population ? num(lane * 1000 / d.population, 1, " m") : dash, d.population ? `${d.population.toLocaleString()} inhabitants` : "No population data here")}
     ${row("Road length", num(km, 1, " km"))}
-    <h4>Types <span class="rd-all"><a data-rd="all">all</a> <a data-rd="none">none</a></span></h4>
-    ${ROAD_TYPES.map(([id, name]) => `<label class="row rd-type${roadSel.has(id) ? "" : " off"}">
+    <h4>Types <span class="rd-all"><a data-rd="cars">cars</a> <a data-rd="all">all</a> <a data-rd="none">none</a></span></h4>
+    ${ROAD_TYPES.map(([id, name]) => `<label class="row rd-type${roadSel.has(id) ? "" : " off"}" title="${esc(ROAD_HINT[id])}">
       <span><input type="checkbox" data-rd="${id}"${roadSel.has(id) ? " checked" : ""}> ${name}</span>
       <b>${by[id] ? fmt(by[id].lane_km, 1) : "0"} <small>lane-km</small></b></label>`).join("")}
     <div class="note">Lanes: lanes tag on ${km ? Math.round(tagged / km * 100) : 0} % of the length, else estimated
@@ -57,11 +57,11 @@ $("res-list").addEventListener("click", e => {
   const a = e.target.closest("a[data-rd]");
   if (!a || !roadData) return;
   roadSel.clear();
-  if (a.dataset.rd === "all") ROAD_TYPES.forEach(t => roadSel.add(t[0]));
+  for (const [id] of ROAD_TYPES) if (a.dataset.rd === "all" || a.dataset.rd === "cars" && !ROAD_OFF.includes(id)) roadSel.add(id);
   roadsChanged();
 });
 function roadsChanged() {
-  store.set("roadTypes", [...roadSel]);
+  store.set("roadTypes3", [...roadSel]);
   showRoads();
   if (map.hasLayer(overlays[ROADS])) { overlays[ROADS].redraw(); updateLegend(); }
 }
