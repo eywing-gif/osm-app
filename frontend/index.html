@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OSM Tag Search</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- vector maps (black & white / dark themes) -->
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <!-- contour lines from elevation data (topo map) -->
+  <script src="https://unpkg.com/maplibre-contour@0.1.0/dist/index.min.js"></script>
+  <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
+  <!-- drawing tool (custom search areas) -->
+  <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.css">
+  <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.min.js"></script>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/settings.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div id="brand"><span>OSM Tag Search</span>
+        <button type="button" id="sb-close" class="sb-btn" title="Hide sidebar (Ctrl+B)" aria-label="Hide sidebar">‹</button>
+      </div>
+      <form id="form" autocomplete="off">
+        <input id="q" placeholder="Search tags: restaurant, amenity=cafe, cuisine=*" spellcheck="false"
+               role="combobox" aria-controls="suggest" aria-expanded="false">
+        <button type="button" id="clear" class="icon-btn" title="Clear">×</button>
+        <button id="go">Search</button>
+      </form>
+      <div id="suggest" role="listbox"></div>
+
+      <!-- tag library: every key and its values, sorted -->
+      <div id="library">
+        <div class="lib-head">
+          <button type="button" id="lib-back" class="sb-btn" title="Back to all keys" aria-label="Back to all keys" hidden>‹</button>
+          <div class="lib-title"><b id="lib-title">Tag library</b><span id="lib-sub"></span></div>
+          <button type="button" id="lib-close" class="sb-btn" title="Close library (Esc)" aria-label="Close library">×</button>
+        </div>
+        <div class="lib-tools">
+          <div id="lib-source" class="seg" role="radiogroup" aria-label="Where the tags come from">
+            <button type="button" data-src="online" role="radio">Worldwide<small>all OSM tags · taginfo</small></button>
+            <button type="button" data-src="local" role="radio">Local data<small>what your database has</small></button>
+          </div>
+          <div class="lib-row">
+            <input id="lib-q" placeholder="Filter keys…" spellcheck="false" autocomplete="off">
+            <select id="lib-sort" aria-label="Sort order">
+              <option value="name">A–Z</option>
+              <option value="count">Most used</option>
+            </select>
+          </div>
+          <label class="lib-doc" id="lib-doc-row"><input type="checkbox" id="lib-doc"> Only tags documented in the OSM wiki</label>
+        </div>
+        <div id="lib-list" role="list"></div>
+      </div>
+
+      <div id="transit">
+        <div class="insp-head">
+          <div class="lib-title"><b>Transit</b><span>Lines and how often they run</span></div>
+          <button type="button" id="trn-close" class="sb-btn" title="Close (Esc)" aria-label="Close transit mode">×</button>
+        </div>
+        <div id="trn-body">
+          <div id="trn-day" class="seg" role="radiogroup" aria-label="Day of the week">
+            <button type="button" data-day="wd" role="radio">Weekday</button>
+            <button type="button" data-day="sa" role="radio">Saturday</button>
+            <button type="button" data-day="su" role="radio">Sunday</button>
+          </div>
+          <h4>Show</h4>
+          <div id="trn-view" class="seg" role="radiogroup" aria-label="What to show">
+            <button type="button" data-view="lines" role="radio">Lines</button>
+            <button type="button" data-view="stations" role="radio">Stations</button>
+          </div>
+          <div id="trn-lines-opts">
+            <h4>Line width</h4>
+            <div id="trn-width" class="seg" role="radiogroup" aria-label="Line width">
+              <button type="button" data-width="freq" role="radio">By frequency</button>
+              <button type="button" data-width="same" role="radio">All the same</button>
+            </div>
+            <h4>Line colour</h4>
+            <div id="trn-color" class="seg" role="radiogroup" aria-label="Line colour">
+              <button type="button" data-color="type" role="radio">By type of line</button>
+              <button type="button" data-color="gray" role="radio">Gray</button>
+            </div>
+            <label class="tr-check"><input type="checkbox" id="trn-lanes"> Draw lines of different types side by side</label>
+          </div>
+          <div id="trn-stations-opts">
+            <h4>Dot size</h4>
+            <div id="trn-size" class="seg" role="radiogroup" aria-label="Dot size">
+              <button type="button" data-size="freq" role="radio">By departures</button>
+              <button type="button" data-size="same" role="radio">All the same</button>
+            </div>
+          </div>
+          <div id="trn-filter-head">
+            <button type="button" id="trn-filter-btn" class="lib-btn" aria-expanded="false" title="Choose which stations are shown on the map"></button>
+            <span id="trn-count"></span>
+            <div id="trn-filter-tags"></div>
+          </div>
+          <div id="trn-filterbox">
+            <h4>Type of line <span><a id="trn-all">all</a><a id="trn-none">none</a></span></h4>
+            <div id="trn-modes"></div>
+            <h4>How often it runs <span><a id="trn-fall">all</a></span></h4>
+            <div id="trn-freq" class="tr-freq"></div>
+            <div id="trn-sfilters"></div>
+          </div>
+          <h4>Click the map</h4>
+          <div id="tr-info"><div class="empty">Click a line to see which services use that section and how often they run.</div></div>
+        </div>
+        <div id="tr-note"></div>
+      </div>
+
+      <div id="inspect">
+        <div class="insp-head">
+          <div class="lib-title"><b>Point info</b><span id="insp-sub">Click the map</span></div>
+          <button type="button" id="insp-close" class="sb-btn" title="Close (Esc)" aria-label="Close point info">×</button>
+        </div>
+        <div id="insp-body"></div>
+      </div>
+
+      <div id="landuse">
+        <div class="insp-head">
+          <div class="lib-title"><b>Landuse</b><span>OpenStreetMap landuse=*</span></div>
+          <button type="button" id="lu-close" class="sb-btn" title="Close (Esc)" aria-label="Close landuse">×</button>
+        </div>
+        <div id="lu-body"></div>
+      </div>
+
+      <div id="sections">
+      <!-- area the tag search is limited to -->
+      <div id="area" class="sec">
+        <div class="area-bar">
+          <span class="area-label">Search in</span>
+          <button type="button" id="area-chip" aria-expanded="false">
+            <span id="area-chip-text">Visible map area</span> <span class="caret">▾</span>
+          </button>
+          <button type="button" id="area-clear" class="icon-btn" title="Remove area limit">×</button>
+        </div>
+        <div id="area-picker" hidden>
+          <form id="area-form" autocomplete="off">
+            <input id="area-q" placeholder="District, town, region, national park…" spellcheck="false">
+            <button>Find</button>
+          </form>
+          <div id="area-results"></div>
+          <div class="draw-row">
+            <span>or draw your own:</span>
+            <button type="button" data-shape="Polygon">⬠ Polygon</button>
+            <button type="button" data-shape="Rectangle">▭ Rectangle</button>
+            <button type="button" data-shape="Circle">◯ Circle</button>
+          </div>
+        </div>
+        <div id="area-info" hidden></div>
+      </div>
+
+        <div class="sec">
+          <div id="source" class="seg" role="radiogroup" aria-label="Data source">
+            <button type="button" data-src="local" role="radio">Local<small id="local-label">fast</small></button>
+            <button type="button" data-src="online" role="radio">Online<small>everywhere · slower</small></button>
+          </div>
+        </div>
+
+        <div id="results" class="sec">
+          <div class="res-head">
+            <div><span id="res-count">–</span><span id="res-label">objects found</span></div>
+            <label class="follow"><input type="checkbox" id="live" checked> Follow map</label>
+          </div>
+          <div id="status">Type a tag or pick one from the list.</div>
+          <div id="mk-hint" hidden>Markers are hidden – switch them on in the layer menu (top right of the map).</div>
+          <div id="res-list">
+            <div id="help">
+              Try <code>bakery</code> <code>amenity=bench</code> <code>cuisine=*</code>
+              <code>amenity=restaurant &amp; cuisine=italian</code> <code>name:Späti</code> <code>population</code>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <div id="resizer" role="separator" aria-orientation="vertical" aria-label="Sidebar width"
+         tabindex="0" title="Drag to resize – double-click to reset"></div>
+
+    <div id="mapwrap">
+      <button type="button" id="sb-open" title="Show sidebar (Ctrl+B)" aria-label="Show sidebar">›</button>
+      <div id="map"></div>
+      <!-- tools: a slim bar on top of the map (takes no space from it) -->
+      <div id="notice" hidden><span></span><button type="button">Settings</button></div>
+      <nav id="toolbar" aria-label="Tools">
+        <button type="button" id="pop-btn" title="Inhabitants of an area">Population</button>
+        <button type="button" id="trn-btn" title="Public transport" aria-expanded="false">Transit</button>
+        <button type="button" id="lu-btn" title="Land use: OSM tags" aria-expanded="false">Landuse</button>
+        <button type="button" id="insp-btn" title="Click the map: everything at that point" aria-expanded="false">Point info</button>
+        <button type="button" id="lib-btn" title="Browse all tags" aria-expanded="false">Tags</button>
+        <button type="button" id="settings-btn" title="Data sets: download, switch" aria-label="Settings">⚙</button>
+      </nav>
+      <div id="legend"></div>
+      <div id="bar">
+        <span id="zoom-info"></span>
+        <span id="pop-filter-wrap" hidden>
+          <button type="button" id="pop-filter-btn" title="Choose which densities are shown">Density Filter</button>
+          <div id="pop-filter" hidden>
+            <b>Density Filter</b>
+            <label>From <input type="number" id="pop-min" min="0" step="100" placeholder="0"></label>
+            <label>To <input type="number" id="pop-max" min="0" step="100" placeholder="∞"></label>
+            <label>Squares <select id="pop-size"></select></label>
+            <label><span>Show values</span> <input type="checkbox" id="pop-labels"></label>
+            <button type="button" id="pop-reset">Reset</button>
+          </div>
+        </span>
+        <span id="coords" title="Cursor position (lat, lon) – click to copy">–</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings"></div>
+  <script src="/static/settings.js"></script>
+  <script src="/static/core.js"></script>
+  <script src="/static/layers.js"></script>
+  <script src="/static/search.js"></script>
+  <script src="/static/library.js"></script>
+  <script src="/static/inspect.js"></script>
+  <script src="/static/landuse.js"></script>
+  <script src="/static/transit.js"></script>
+</body>
+</html>

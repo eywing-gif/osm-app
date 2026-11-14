@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Station</title>
+  <style>
+    :root { --accent: #2563eb; --text: #1f2328; --muted: #6b7280; --line: #e5e7eb; --hover: #eef3fe; --bg: #fff; --card: #f8fafc; }
+    @media (prefers-color-scheme: dark) {
+      :root { --text: #e5e7eb; --muted: #9ca3af; --line: #2d3340; --hover: #1e293b; --bg: #11151c; --card: #181d27; --accent: #6ea0ff; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px system-ui, sans-serif; color: var(--text); background: var(--bg); }
+    main { max-width: 860px; margin: 0 auto; padding: 16px 20px 40px; }
+    h1 { margin: 0; font-size: 22px; line-height: 1.2; overflow-wrap: anywhere; }
+    .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
+    h2 { margin: 26px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); display: flex; align-items: baseline; gap: 8px; }
+    h2 small { text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+    .seg { display: inline-flex; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 3px; margin-top: 12px; }
+    .seg button { border: 0; background: transparent; color: var(--muted); padding: 5px 14px; border-radius: 6px; font: inherit; cursor: pointer; }
+    .seg button.on { background: var(--bg); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+    @media (max-width: 460px) { main { padding: 12px 12px 30px; } .seg button { padding: 5px 9px; } .cards { grid-template-columns: 1fr 1fr; } .card b { font-size: 20px; } }
+    .tags { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .tag { background: var(--hover); border: 1px solid var(--accent); border-radius: 12px; padding: 2px 10px; font-size: 12px; }
+
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 16px; }
+    .card { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 10px 12px; }
+    .card b { display: block; font-size: 24px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+    .card span { font-size: 12px; color: var(--muted); }
+    .mix { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin: 14px 0 6px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; }
+    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+
+    /* ranked lines */
+    .lines { list-style: none; margin: 0; padding: 0; }
+    .lines { display: flex; flex-direction: column; gap: 6px; }
+    .ln { border: 1px solid var(--line); background: var(--card); border-radius: 10px; overflow: hidden; }
+    .ln.open { border-color: var(--accent); }
+    .ln-head { display: grid; grid-template-columns: 26px auto 1fr auto 16px; gap: 10px; align-items: center; padding: 9px 12px; cursor: pointer; user-select: none; }
+    .ln-head:hover { background: var(--hover); }
+    .chev { color: var(--muted); transition: transform .15s; font-size: 12px; text-align: center; }
+    .ln.open .chev { transform: rotate(90deg); }
+    .ln-body { display: none; padding: 0 12px 10px; border-top: 1px solid var(--line); }
+    .ln.open .ln-body { display: block; }
+    .ln-body .bar { margin-left: 0; margin-top: 10px; }
+    .ln-body .dirs { margin-left: 0; }
+    .lbar { display: flex; gap: 14px; justify-content: flex-end; font-size: 12px; margin: 4px 0; }
+    .lbar a { color: var(--accent); cursor: pointer; }
+    .rank { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; font-size: 12px; }
+    .badge { min-width: 44px; text-align: center; padding: 3px 8px; border-radius: 6px; color: #fff; font-weight: 700; white-space: nowrap; }
+    .mode { color: var(--muted); font-size: 12px; }
+    .rate { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .rate b { font-size: 16px; }
+    .rate span { display: block; font-size: 12px; color: var(--muted); }
+    .bar { height: 5px; border-radius: 3px; margin: 8px 0 4px 36px; background: var(--line); overflow: hidden; }
+    .bar i { display: block; height: 100%; border-radius: 3px; }
+    .dirs { margin: 2px 0 0 36px; }
+    .dir { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 4px 0; font-size: 13px; }
+    .dir .to { font-weight: 600; overflow-wrap: anywhere; }
+    .dir .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .dir .meta { grid-column: 1 / 3; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    /* filter: hide / show lines by type of vehicle (collapsed by default) */
+    .fbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 4px; }
+    .fbtn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--card); color: var(--text);
+      border-radius: 8px; padding: 4px 12px; font: inherit; cursor: pointer; }
+    .fbtn:hover { background: var(--hover); }
+    .fbtn.on { border-color: var(--accent); }
+    .fbtn .n { background: var(--accent); color: #fff; border-radius: 8px; padding: 0 6px; font-size: 11px; font-weight: 700; }
+    .fcount { font-size: 12px; color: var(--muted); }
+    .fpanel { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 8px 10px 10px; margin: 6px 0 4px; }
+    .fpanel[hidden] { display: none; }
+    .fhead { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .fhead a { color: var(--accent); cursor: pointer; margin-left: 10px; }
+    .fchips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .fchip { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: var(--bg); border-radius: 18px;
+      padding: 4px 11px 4px 8px; cursor: pointer; user-select: none; }
+    .fchip i { width: 12px; height: 12px; border-radius: 4px; flex: none; }
+    .fchip small { color: var(--muted); }
+    .fchip.off { opacity: .5; }
+    .fchip.off i { background: transparent !important; border: 2px solid var(--muted); }
+    .empty { color: var(--muted); padding: 14px 0; }
+    .error { color: #b91c1c; padding: 14px 0; }
+    svg text { fill: var(--muted); }
+    .foot { margin-top: 30px; font-size: 11px; line-height: 1.5; color: var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+  <h1 id="name">Station</h1>
+  <div class="sub" id="sub">Loading …</div>
+  <div class="seg" id="days" role="radiogroup" aria-label="Day of the week">
+    <button type="button" data-day="wd" role="radio">Weekday</button>
+    <button type="button" data-day="sa" role="radio">Saturday</button>
+    <button type="button" data-day="su" role="radio">Sunday</button>
+  </div>
+  <div class="tags" id="tags"></div>
+
+  <div id="content"></div>
+
+  <div class="foot">
+    Departures 07–19 h · interval = 12 h ÷ departures · both directions added · ranked by departures here.
+    <span id="src">Timetables</span> · © OpenStreetMap contributors.
+  </div>
+</main>
+
+<script>
+  // ---- what the main window passed on: station position, day of the week and the filter of the centre levels
+  const params = new URLSearchParams(location.search);
+  const API = "";
+  let day = ["wd", "sa", "su"].includes(params.get("day")) ? params.get("day") : "wd";
+  const lon = params.get("lon"), lat = params.get("lat"), centre = params.get("centre") || "";
+
+  const MODES = {   // same colours as on the map
+    highspeed: ["High-speed train", "#0f172a"], intercity: ["Intercity train", "#db2777"], regional: ["Regional train", "#ea580c"],
+    sbahn: ["S-Bahn", "#16a34a"], subway: ["Subway", "#2563eb"], tram: ["Tram", "#7c3aed"], bus: ["Bus", "#0891b2"],
+    coach: ["Long-distance bus", "#84cc16"], ferry: ["Ferry", "#64748b"], other: ["Other", "#a16207"],
+  };
+  const LEVELS = { oz: "Oberzentrum", mz: "Mittelzentrum", gz: "Grundzentrum", other: "Other centre", none: "Without centre" };
+  const DAY_NAME = { wd: "Weekday", sa: "Saturday", su: "Sunday" };
+
+  // lines of these types are hidden in the list (a choice of this window; the numbers on top always cover the whole station)
+  const hiddenModes = new Set();
+  let filterOpen = false;                 // the filter is collapsed by default
+  const openLines = new Set();            // expanded lines (cat|line)
+  let current = null;                     // last data of the station
+
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const num = (n, d = 0) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
+  const perH = v => num(v, v < 10 ? 1 : 0);
+  const mins = m => m == null ? "–" : (m < 10 ? num(m, 1) : Math.round(m)) + " min";
+  const km = k => k == null ? "–" : num(k, k < 10 ? 1 : 0) + " km";
+  const time = sec => {   // seconds after midnight; trips after midnight carry on past 24:00
+    if (sec == null) return "–";
+    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60);
+    return `${String(h % 24).padStart(2, "0")}:${String(m).padStart(2, "0")}${h >= 24 ? " (+1)" : ""}`;
+  };
+
+  /* ---- Lines: the two directions of a line (same type and name, different destination) are one entry ----
+     Ranked by the departures at this station (both directions together). */
+  function groupLines(lines) {
+    const byLine = new Map();
+    for (const l of lines) {
+      const key = `${l.cat}|${l.line}`;
+      let g = byLine.get(key);
+      if (!g) g = byLine.set(key, { cat: l.cat, line: l.line, window: 0, day: 0, first: null, last: null, directions: [] }).get(key);
+      g.window += l.departures_window; g.day += l.departures_day;
+      if (l.first != null) g.first = g.first == null ? l.first : Math.min(g.first, l.first);
+      if (l.last != null) g.last = g.last == null ? l.last : Math.max(g.last, l.last);
+      g.directions.push(l);
+    }
+    const out = [...byLine.values()];
+    for (const g of out) g.directions.sort((a, b) => b.departures_window - a.departures_window || b.departures_day - a.departures_day);
+    return out.sort((a, b) => b.window - a.window || b.day - a.day || String(a.line).localeCompare(String(b.line), undefined, { numeric: true }));
+  }
+
+  function renderLines(groups, allCount = groups.length) {
+    if (!groups.length) return allCount ? '<div class="empty">All lines are hidden – use the filter to show them.</div>' : '<div class="empty">No departures on this day.</div>';
+    const top = Math.max(1, groups[0].window);
+    return `<div class="lbar"><a id="lopen">expand all</a><a id="lclose">collapse all</a></div><ol class="lines">${groups.map((g, i) => {
+      const [modeName, color] = MODES[g.cat] || [g.cat, "#555"];
+      const interval = g.window ? 720 / g.window : null;
+      const key = `${g.cat}|${g.line}`;
+      return `<li class="ln${openLines.has(key) ? " open" : ""}" data-key="${esc(key)}">
+        <div class="ln-head" role="button" tabindex="0" aria-expanded="${openLines.has(key)}">
+          <span class="rank">${g.rank ?? i + 1}</span>
+          <span class="badge" style="background:${color}">${esc(g.line || "?")}</span>
+          <span class="mode">${esc(modeName)}${g.directions.length > 1 ? ` · ${g.directions.length} destinations` : ""}</span>
+          <span class="rate">${g.window ? `<b>${perH(g.window / 12)}</b> per hour<span>every ${mins(interval)}</span>` : `<b>${g.day}</b> per day`}</span>
+          <span class="chev">▶</span>
+        </div>
+        <div class="ln-body">
+        <div class="bar"><i style="width:${g.window / top * 100}%;background:${color}"></i></div>
+        <div class="dirs">${g.directions.map(l => `
+          <div class="dir">
+            <span class="to">→ ${esc(l.destination || "?")}</span>
+            <span class="num">${l.departures_window ? `${perH(l.per_hour)} /h · every ${mins(l.interval_min)}` : `${l.departures_day} per day`}</span>
+            <span class="meta">${l.departures_day} per day · ${time(l.first)} – ${time(l.last)}
+              · to the destination ${km(l.rest_km)}, ${mins(l.rest_min)} · whole line ${km(l.length_km)}, ${l.stops} stops${l.origin ? `, from ${esc(l.origin)}` : ""}${l.centre && l.centre !== "No centre" ? ` · into ${esc(l.centre)}` : ""}</span>
+          </div>`).join("")}</div>
+        </div>
+      </li>`;
+    }).join("")}</ol>`;
+  }
+
+  function renderSummary(d) {
+    const total = d.total_window || 1;
+    const mix = d.modes.map(m => `<div style="width:${m.departures_window / total * 100}%;background:${(MODES[m.cat] || [, "#555"])[1]}" title="${esc((MODES[m.cat] || [m.cat])[0])}"></div>`).join("");
+    const legend = d.modes.map(m => `<span><i style="background:${(MODES[m.cat] || [, "#555"])[1]}"></i>${esc((MODES[m.cat] || [m.cat])[0])} ${perH(m.per_hour)}/h</span>`).join("");
+    // departures per hour of the day (whole day); the hours the interval is based on (7-19) are darker
+    const max = Math.max(1, ...d.hourly), bw = 14, h = 70;
+    const bars = d.hourly.map((n, hr) => {
+      const bh = Math.round(n / max * h);
+      return `<rect x="${hr * (bw + 3)}" y="${h - bh}" width="${bw}" height="${Math.max(bh, n ? 1 : 0)}" rx="2" fill="${hr >= 7 && hr < 19 ? "var(--accent)" : "#9db8f0"}"><title>${String(hr).padStart(2, "0")}:00–${String(hr + 1).padStart(2, "0")}:00 · ${n} departures</title></rect>`;
+    }).join("");
+    const ticks = [0, 6, 12, 18].map(hr => `<text x="${hr * (bw + 3)}" y="${h + 13}" font-size="10">${hr}</text>`).join("");
+    return `
+      <div class="cards">
+        <div class="card"><b>${d.total_window ? perH(d.per_hour) : "–"}</b><span>departures per hour (07–19 h)</span></div>
+        <div class="card"><b>${d.interval_min ? mins(d.interval_min) : "–"}</b><span>between two departures, all lines</span></div>
+        <div class="card"><b>${num(d.total_day)}</b><span>departures per day</span></div>
+        <div class="card"><b>${time(d.first)}</b><span>first · last ${time(d.last)}</span></div>
+      </div>
+      <div id="catch"></div>
+      ${d.modes.length ? `<div class="mix">${mix}</div><div class="legend">${legend}</div>` : ""}
+      <h2>Departures by hour of the day</h2>
+      <svg viewBox="0 0 ${24 * (bw + 3)} ${h + 18}" width="100%" role="img" aria-label="Departures per hour of the day">${bars}${ticks}</svg>`;
+  }
+
+  // ---- filter: lines by type of vehicle ----
+  function renderFilter(groups) {
+    const kinds = [...new Set(groups.map(g => g.cat))].sort((a, b) => Object.keys(MODES).indexOf(a) - Object.keys(MODES).indexOf(b));
+    const nHidden = kinds.filter(k => hiddenModes.has(k)).length;
+    const shown = groups.filter(g => !hiddenModes.has(g.cat)).length;
+    const chip = k => {
+      const n = groups.filter(g => g.cat === k).length, [name, color] = MODES[k] || [k, "#555"];
+      return `<label class="fchip${hiddenModes.has(k) ? " off" : ""}"><input type="checkbox" data-mode="${k}" hidden${hiddenModes.has(k) ? "" : " checked"}><i style="background:${color}"></i>${esc(name)} <small>${n}</small></label>`;
+    };
+    return `<div class="fbar">
+        <button type="button" class="fbtn${nHidden ? " on" : ""}" id="fbtn" aria-expanded="${filterOpen}" title="Show or hide lines by type of vehicle">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1.5 2h13l-5 6.2V13l-3 1.5V8.2z"/></svg> Filter${nHidden ? ` <span class="n">${nHidden}</span>` : ""}
+        </button>
+        <span class="fcount">${nHidden ? `${shown} of ${groups.length} lines shown` : `${groups.length} line${groups.length === 1 ? "" : "s"}`}</span>
+      </div>
+      <div class="fpanel" ${filterOpen ? "" : "hidden"}>
+        <div class="fhead"><span>Type of vehicle</span><span><a id="fall">show all</a><a id="fnone">hide all</a></span></div>
+        <div class="fchips">${kinds.map(chip).join("")}</div>
+        ${nHidden ? '<div class="fhead" style="margin:8px 0 0">The numbers and the chart above always cover all lines of the station.</div>' : ""}
+      </div>`;
+  }
+
+  function renderBody() {
+    const d = current, groups = groupLines(d.lines);
+    groups.forEach((g, i) => { g.rank = i + 1; });      // the rank at the station stays the same when lines are hidden
+    $("content").innerHTML = renderSummary(d)
+      + `<h2>Lines at this station <small>ranked by departures per hour, both directions together</small></h2>`
+      + renderFilter(groups)
+      + renderLines(groups.filter(g => !hiddenModes.has(g.cat)), groups.length);
+    if ($("catch")) $("catch").innerHTML = catchHtml;
+  }
+
+  // inhabitants within 5 minutes of walking (radius = walking distance / detour factor)
+  let catchHtml = "";
+  async function loadCatchment() {
+    const el = $("catch"); if (!el) return;
+    try {
+      const r = await fetch(`${API}/catchment?${new URLSearchParams({ lon, lat })}`);
+      if (!r.ok) throw 0;
+      const c = await r.json();
+      el.innerHTML = catchHtml = `<div class="cards" style="margin-top:10px">
+          <div class="card"><b>${num(c.population)}</b><span>inhabitants · ${c.minutes} min walk</span></div>
+          <div class="card"><b>${c.density != null ? num(c.density) : "–"}</b><span>per km² · same circle</span></div>
+        </div>
+        <div class="legend" style="margin-top:6px">${c.minutes} min · ${num(c.speed_kmh, 1)} km/h = ${c.walk_m} m on foot · ÷ ${num(c.detour, 1)} detour = <b>&nbsp;${c.radius_m} m&nbsp;</b> radius · ${esc(c.dataset)}</div>`;
+    } catch { el.innerHTML = catchHtml = ""; }
+  }
+
+  async function load() {
+    document.querySelectorAll("#days button").forEach(b => b.classList.toggle("on", b.dataset.day === day));
+    $("content").innerHTML = '<div class="empty">Loading …</div>';
+    try {
+      const r = await fetch(`${API}/transit/station?${new URLSearchParams({ lon, lat, day, centre })}`);
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+      const d = current = await r.json();
+      document.title = `${d.name} – stations`;
+      $("name").textContent = d.name;
+      const groups = groupLines(d.lines).length;
+      $("sub").textContent = `${groups} line${groups === 1 ? "" : "s"} · ${DAY_NAME[day]}` + (d.in_centre ? ` · in the centre of ${d.in_centre.name} (${d.in_centre.level})` : "");
+      const sel = centre.split(",").filter(c => LEVELS[c]);
+      $("tags").innerHTML = sel.length ? `<span class="tag">Lines into: ${sel.map(c => LEVELS[c]).join(", ")}</span>` : "";
+      renderBody();
+      catchHtml = ""; loadCatchment();
+      fetch(`${API}/datasets/active`).then(r => r.json()).then(a => { $("src").textContent = "Timetables: " + (a.transit_name || "–"); }).catch(() => {});
+    } catch (e) {
+      $("content").innerHTML = `<div class="error">${esc(e.message)}</div>`;
+    }
+  }
+
+  // clicks inside the content: open / close the filter, hide / show a type of vehicle
+  $("content").addEventListener("click", e => {
+    if (!current) return;
+    const head = e.target.closest(".ln-head");
+    if (head) {
+      const li = head.parentElement, k = li.dataset.key;
+      const o = li.classList.toggle("open");
+      o ? openLines.add(k) : openLines.delete(k);
+      head.setAttribute("aria-expanded", o);
+      return;
+    }
+    if (e.target.closest("#lopen") || e.target.closest("#lclose")) {
+      const open = !!e.target.closest("#lopen");
+      document.querySelectorAll(".ln").forEach(li => { li.classList.toggle("open", open); open ? openLines.add(li.dataset.key) : openLines.delete(li.dataset.key); });
+      return;
+    }
+    if (e.target.closest("#fbtn")) { filterOpen = !filterOpen; return renderBody(); }
+    const all = groupLines(current.lines);
+    if (e.target.closest("#fall")) { hiddenModes.clear(); return renderBody(); }
+    if (e.target.closest("#fnone")) { all.forEach(g => hiddenModes.add(g.cat)); return renderBody(); }
+    const chip = e.target.closest(".fchip");
+    if (chip) {
+      e.preventDefault();
+      const k = chip.querySelector("input").dataset.mode;
+      hiddenModes.has(k) ? hiddenModes.delete(k) : hiddenModes.add(k);
+      renderBody();
+    }
+  });
+
+  $("days").addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    day = b.dataset.day;
+    const p = new URLSearchParams(location.search); p.set("day", day);
+    history.replaceState(null, "", `?${p}`);
+    load();
+  });
+  if (lon == null || lat == null) $("content").innerHTML = '<div class="error">No station given.</div>'; else load();
+</script>
+</body>
+</html>
