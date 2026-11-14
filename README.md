@@ -8,8 +8,17 @@ git clone https://github.com/eywing-gif/osm-app && cd osm-app
 sh install.sh        # checks system, creates venv, adds menu entry
 python3 app.py       # desktop window; or: venv/bin/uvicorn backend.main:app  → http://localhost:8000
 ```
-Needs (Debian / Ubuntu): `python3-venv python3-gi gir1.2-webkit2-4.1 postgresql postgis osm2pgsql git`
-and a PostgreSQL user that may create databases (`sudo -u postgres createuser -s $USER`).
+Needs Python 3, PyGObject + WebKitGTK 4.1, PostgreSQL + PostGIS, osm2pgsql, git, and a PostgreSQL user that may create databases.
+`install.sh` prints the exact commands for your system when something is missing. Arch:
+
+```sh
+sudo pacman -S --needed python python-gobject webkit2gtk-4.1 postgresql postgis osm2pgsql git
+sudo -u postgres initdb -D /var/lib/postgres/data     # first time only
+sudo systemctl enable --now postgresql
+sudo -u postgres createuser -s $USER
+```
+
+Debian / Ubuntu: `sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1 postgresql postgis osm2pgsql git`, then `sudo -u postgres createuser -s $USER`.
 ⚙ Settings → **App** shows what is missing.
 
 ## Update
