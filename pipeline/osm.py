@@ -6,8 +6,10 @@
 `build` imports the files with osm2pgsql into a fresh database and swaps it in; the old one stays as <osm>_old.
 Data: © OpenStreetMap contributors (ODbL), extracts by Geofabrik.
 """
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import psycopg
 
@@ -36,17 +38,73 @@ def fetch(region: str, fresh: bool = False):
     update_state(lambda st: st.setdefault("osm", {}).setdefault("downloaded", {}).__setitem__(region, f.stat().st_size))
 
 
+DISK_FACTOR = 20      # the import needs about this many times the size of the .pbf files on the database disk (at its peak)
+
+
+def free_disk() -> int | None:
+    """Free bytes on the disk PostgreSQL keeps its data on (None if unknown)."""
+    try:
+        with psycopg.connect(dsn("postgres")) as c:
+            path = Path(c.execute("SHOW data_directory").fetchone()[0])
+    except psycopg.Error:
+        return None
+    for p in (path, *path.parents):        # the data folder itself is not readable for us: its parent is on the same disk
+        try:
+            st = os.statvfs(p)
+            return st.f_bavail * st.f_frsize
+        except OSError:
+            continue
+    return None
+
+
+def cache_mb() -> int:
+    """Node cache of osm2pgsql: 2 GB, less on a machine with little free memory."""
+    try:
+        avail = next(int(l.split()[1]) for l in open("/proc/meminfo") if l.startswith("MemAvailable")) // 1024
+    except (OSError, StopIteration, ValueError):
+        return 1000
+    return max(300, min(2000, avail * 4 // 10))
+
+
+def import_files(db: str, files: list[Path]):
+    """osm2pgsql into db; its output goes to the log. On failure: a clear message instead of a traceback."""
+    # --slim --drop: helper tables only during the import; several files are merged by osm2pgsql itself
+    cmd = ["osm2pgsql", "-d", db, "--create", "--slim", "--drop", "--hstore", "--cache", str(cache_mb()),
+           "--number-processes", str(min(4, os.cpu_count() or 1)), *map(str, files)]
+    log(" ".join(cmd))
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+    last_error = ""
+    for line in proc.stdout:
+        print(line, end="", flush=True)
+        if "ERROR" in line:
+            last_error = line.split("ERROR", 1)[1].lstrip(": ").strip()
+    rc = proc.wait()
+    if rc:
+        reason = last_error or (f"stopped by signal {-rc} – out of memory?" if rc < 0 else f"exit code {rc}")
+        if "space" in reason.lower():
+            reason += " – not enough disk space"
+        raise SystemExit(f"Map import failed: {reason}")
+
+
 def build(regions: list[str], fresh: bool = False):
     have("osm2pgsql")
     for r in regions:
         fetch(r, fresh)
+    files = [catalog.osm_file(r) for r in regions]
+    need, free = sum(f.stat().st_size for f in files) * DISK_FACTOR, free_disk()
+    if free is not None and free < need:
+        raise SystemExit(f"Not enough disk space: the import needs about {need / 1e9:.0f} GB, {free / 1e9:.0f} GB are free. "
+                         "Choose smaller regions or free up space.")
     new = DB_OSM + "_import"
     progress(5, "creating database")
     recreate_db(new, ("postgis", "hstore"))
     progress(10, "importing (takes a while)")
-    # --slim --drop: helper tables only during the import; several files are merged by osm2pgsql itself
-    subprocess.run(["osm2pgsql", "-d", new, "--create", "--slim", "--drop", "--hstore", "--cache", "2000",
-                    "--number-processes", "4", *map(str, (catalog.osm_file(r) for r in regions))], check=True)
+    try:
+        import_files(new, files)
+    except BaseException:
+        with psycopg.connect(dsn("postgres"), autocommit=True) as c:      # give the disk space back
+            c.execute(f"DROP DATABASE IF EXISTS {new} WITH (FORCE)")
+        raise
     progress(80, "indexes")
     with psycopg.connect(dsn(new), autocommit=True) as c:
         c.execute(INDEXES)

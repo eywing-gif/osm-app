@@ -137,7 +137,7 @@ def job_status():
     state = "running" if rc is None else "done" if rc == 0 else "cancelled" if rc < 0 else "failed"
     text = prog[2] if len(prog) > 2 else ""
     if state == "failed":
-        text = next((l for l in reversed(lines) if l.strip() and not l.startswith("@")), "failed")
+        text = next((l for l in reversed(lines) if l.strip() and not l.startswith("@") and not l.startswith(" ")), "failed")
     return {"title": JOB["title"], "state": state, "pct": 100 if state == "done" else int(prog[1]), "text": text}
 
 
