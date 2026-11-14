@@ -72,6 +72,7 @@
     const missing = miss.length, missSize = miss.reduce((a, r) => a + (r.est || 0), 0);
     $("set-body").innerHTML = `<div class="empty" style="padding:0 0 6px">Map data for search, point info, tracks. Pick regions, then Apply.</div><input class="search" placeholder="Search region" value="${esc(filter)}" data-a="filter">${osmRows()}`;
     $("set-apply").innerHTML = `<span>${data.osm.built.length ? "Active: " + data.osm.built.map(i => esc(data.osm.regions.find(r => r.id === i)?.name ?? i)).join(", ") : "No map data"}</span>
+      ${data.osm.built.length ? `<button class="btn" data-a="osmupd" title="Newest map data for the regions in use" ${busy() ? "disabled" : ""}>Update</button>` : ""}
       <button class="btn primary" data-a="apply" ${same || !sel.size || busy() ? "disabled" : ""}>Apply${missing ? ` · ${missing} to download${missSize ? " (" + mb(missSize) + ")" : ""}` : ""}</button>`;
   }
 
@@ -80,8 +81,10 @@
     $("set-body").innerHTML = data[kind].map(d => `<div class="row">
         <span class="name">${esc(d.name)}<small>${esc(d.why)}</small><small>${esc([d.source, d.detail].filter(Boolean).join(" · "))}</small></span>
         <span class="size">${d.mb} MB</span>
+        ${d.outdated ? '<span class="tag warn" title="Made by an older version: Reach needs an update">Old</span>' : ""}
         ${d.active ? '<span class="tag">Active</span>' : ""}
         ${d.installed ? (d.active ? "" : `<button class="btn" data-a="use1" data-id="${d.id}">Use</button>`)
+                         + `<button class="btn${d.outdated ? " primary" : ""}" data-a="inst" data-id="${d.id}" title="Download the newest version and import it again" ${busy() ? "disabled" : ""}>Update</button>`
                          + `<button class="btn" data-a="rm" data-id="${d.id}" ${busy() ? "disabled" : ""}>Delete</button>`
                       : `<button class="btn primary" data-a="inst" data-id="${d.id}" ${busy() ? "disabled" : ""}>Download</button>`}
       </div>`).join("");
@@ -97,7 +100,7 @@
 
   function renderApp() {
     if (!app) { loadApp(); return; }
-    const j = data.job, updated = j?.title.startsWith("Update") && j.state === "done";
+    const j = data.job, updated = j?.title.startsWith("App ") && j.state === "done";
     $("set-body").innerHTML = `<div class="row"><span class="name">Version<small>${esc(app.mode === "git" ? "git checkout" : "zip install")} · ${esc(app.repo)}</small></span>
         <b>${esc(app.version)}</b>
         ${updated ? '<button class="btn primary" data-a="restart">Restart</button>'
@@ -141,6 +144,7 @@
     if (a === "cancel") await call("POST", "/job/cancel");
     else if (a === "get") await call("POST", "/osm/download", { regions: [id] });
     else if (a === "apply") await call("POST", "/osm/build", { regions: [...sel] });
+    else if (a === "osmupd") { if (!confirm("Download the newest map data and build it again?")) return; await call("POST", "/osm/update", { regions: data.osm.built }); }
     else if (a === "del") { if (!confirm("Delete the download?")) return; await call("DELETE", "/osm/" + id); }
     else if (a === "inst") await call("POST", `/${tab}/${id}/install`);
     else if (a === "use1") { await call("POST", `/${tab}/${id}/activate`); window.dataChanged?.(); }

@@ -71,6 +71,11 @@
           <div id="trn-view" class="seg" role="radiogroup" aria-label="What to show">
             <button type="button" data-view="lines" role="radio">Lines</button>
             <button type="button" data-view="stations" role="radio">Stations</button>
+            <button type="button" data-view="reach" role="radio">Reach</button>
+          </div>
+          <div id="trn-reach-opts">
+            <label class="tr-check">Time <b id="rch-val"></b> min
+              <input type="range" id="rch-min" min="5" max="120" step="5" aria-label="Travel time in minutes" style="flex:1"></label>
           </div>
           <div id="trn-lines-opts">
             <h4>Line width</h4>

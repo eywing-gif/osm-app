@@ -297,6 +297,11 @@
     .tr-dirs .tr-chip small { color: var(--muted); font-weight: 400; }
     .sd-near { font-size: 12px; color: var(--muted); margin-top: 10px; }
     .sd-near a { cursor: pointer; color: var(--accent); margin-right: 8px; }
+    #trn-reach-opts .tr-check { margin-top: 6px; }
+    #trn-reach-opts input { min-width: 0; }
+    #tr-info table.reach { border-collapse: collapse; }
+    #tr-info table.reach td { padding: 2px 14px 2px 0; }
+    #tr-info table.reach td:first-child { color: var(--muted); }
     #tr-info .empty { color: var(--muted); font-size: 12px; padding: 4px 0; }
     #tr-info .hit { padding: 6px 0; border-bottom: 1px solid var(--line); }
     #tr-info .hit .top { display: flex; align-items: center; gap: 6px; font-weight: 600; }

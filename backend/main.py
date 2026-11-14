@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import appinfo, areas, datasets, features, landuse, population, taglib, transit
+from . import appinfo, areas, datasets, features, landuse, population, reach, taglib, transit
 from .common import db, fetch_json, geojson_bbox
 from .tagsql import TABLES, tag_condition, tag_expr
 
@@ -52,6 +52,7 @@ app.include_router(taglib.router)
 app.include_router(features.router)
 app.include_router(population.router)
 app.include_router(transit.router)
+app.include_router(reach.router)
 app.include_router(datasets.router)
 app.include_router(appinfo.router)
 app.include_router(landuse.router)

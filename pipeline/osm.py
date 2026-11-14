@@ -26,18 +26,19 @@ ANALYZE;
 """
 
 
-def fetch(region: str):
+def fetch(region: str, fresh: bool = False):
+    """Download a region (fresh: again, the newest extract; the old file stays until the new one is complete)."""
     f = catalog.osm_file(region)
-    if f.exists():
+    if f.exists() and not fresh:
         return
     download(f"{catalog.GEOFABRIK_PREFIX}{region}-latest.osm.pbf", f, region.rsplit("/", 1)[-1])
     update_state(lambda st: st.setdefault("osm", {}).setdefault("downloaded", {}).__setitem__(region, f.stat().st_size))
 
 
-def build(regions: list[str]):
+def build(regions: list[str], fresh: bool = False):
     have("osm2pgsql")
-    for i, r in enumerate(regions):
-        fetch(r)
+    for r in regions:
+        fetch(r, fresh)
     new = DB_OSM + "_import"
     progress(5, "creating database")
     recreate_db(new, ("postgis", "hstore"))
@@ -68,3 +69,5 @@ if __name__ == "__main__":
             fetch(r)
     elif cmd == "build":
         build(args)
+    elif cmd == "update":          # newest extracts of the regions, then build them
+        build(args, fresh=True)

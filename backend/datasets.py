@@ -12,7 +12,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import catalog, population, transit
+from . import catalog, population, reach, transit
 from .common import DATA, DB_POP, PREFIX, ROOT, db_transit_name, dsn, load_state, update_state
 
 router = APIRouter(prefix="/datasets")
@@ -46,6 +46,11 @@ def installed_transit() -> list[str]:
     return [n[len(PREFIX) + 8:] for n in names if n[len(PREFIX) + 8:] in catalog.FEEDS]
 
 
+def outdated_transit(feed: str) -> bool:
+    """Built by an older version of the app: without the hops the Reach view needs."""
+    return not _query(db_transit_name(feed), "SELECT 1 FROM pg_tables WHERE tablename = 'transit_link'")
+
+
 def downloaded_osm() -> dict[str, int]:
     files = {r["id"]: catalog.osm_file(r["id"]) for r in catalog.osm_regions()}
     return {i: f.stat().st_size for i, f in files.items() if f.exists()}
@@ -69,7 +74,8 @@ def overview():
                 "built": built},
         "population": [{"id": k, **v, "installed": k in pops, "active": k == pa} for k, v in catalog.POPULATION.items()],
         "built": [{"id": k, **v, "installed": k in builts, "active": k == ba} for k, v in catalog.BUILT.items()],
-        "transit": [{"id": k, **v, "installed": k in feeds, "active": k == fa} for k, v in catalog.FEEDS.items()],
+        "transit": [{"id": k, **v, "installed": k in feeds, "active": k == fa, "outdated": k in feeds and outdated_transit(k)}
+                    for k, v in catalog.FEEDS.items()],
         "job": job_status(),
     }
 
@@ -118,6 +124,7 @@ def job_status():
     if rc is not None and not JOB["done"]:
         JOB["done"] = True
         transit.clear_caches()
+        reach.clear_caches()
         population.clear_caches()
     state = "running" if rc is None else "done" if rc == 0 else "cancelled" if rc < 0 else "failed"
     text = prog[2] if len(prog) > 2 else ""
@@ -154,6 +161,15 @@ def osm_build(req: Regions):
     return start("Build map data", "pipeline.osm", "build", *ids)
 
 
+@router.post("/osm/update")
+def osm_update(req: Regions):
+    """Download the newest extracts of the regions in use and build the map data again."""
+    ids = _valid_regions(req.regions)
+    if not ids:
+        raise HTTPException(400, "No map data in use.")
+    return start("Update map data", "pipeline.osm", "update", *ids)
+
+
 @router.delete("/osm/{region:path}")
 def osm_delete(region: str):
     f = catalog.osm_file(_valid_regions([region])[0])
@@ -182,9 +198,10 @@ def _check(kind: str, ds: str):
 
 @router.post("/{kind}/{ds}/install")
 def install(kind: str, ds: str):
+    """Download and import; for an installed dataset: the newest version (Update)."""
     _check(kind, ds)
-    cat, module, _ = KINDS[kind]
-    return start(cat[ds]["name"], module, ds)
+    cat, module, installed = KINDS[kind]
+    return start(("Update " if ds in installed() else "") + cat[ds]["name"], module, ds)
 
 
 @router.post("/{kind}/{ds}/activate")
@@ -194,6 +211,7 @@ def activate(kind: str, ds: str):
         raise HTTPException(400, "Not installed")
     update_state(lambda st: st.setdefault(kind, {}).__setitem__("active", ds))
     transit.clear_caches()
+    reach.clear_caches()
     population.clear_caches()
     return {"ok": True}
 
@@ -209,5 +227,6 @@ def remove(kind: str, ds: str):
             c.execute(f"DROP TABLE IF EXISTS {'pop' if kind == 'population' else 'built'}_{ds}")
     update_state(lambda st: st.get(kind, {}).get("active") == ds and st[kind].pop("active"))
     transit.clear_caches()
+    reach.clear_caches()
     population.clear_caches()
     return {"ok": True}

@@ -69,7 +69,7 @@ def update(req: Update):
     from . import datasets
     if not parse(req.tag):
         raise HTTPException(400, "Bad version.")
-    return datasets.start("Update " + req.tag, "pipeline.update", req.tag)
+    return datasets.start("App " + req.tag, "pipeline.update", req.tag)
 
 
 @router.post("/restart")

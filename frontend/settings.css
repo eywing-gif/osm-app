@@ -28,3 +28,4 @@
 #settings .job.failed .bar i { background: #b91c1c; }
 #settings .job .top { display: flex; justify-content: space-between; gap: 10px; }
 #settings .empty { color: var(--muted); padding: 14px 0; }
+#settings .tag.warn { background: #fef3c7; color: #b45309; }

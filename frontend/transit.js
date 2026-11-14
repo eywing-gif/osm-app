@@ -22,12 +22,12 @@ const trName = Object.fromEntries(TR_MODES.map(m => [m[0], m[1]]));
 const trSaved = store.get("transit", {});
 const tr = {
   on: false, day: trSaved.day || "wd", view: trSaved.view || "lines", width: trSaved.width || "freq",
-  filters: null, filterOpen: false, detailData: null, color: trSaved.color || "type", lanes: trSaved.lanes !== false, size: trSaved.size || "freq",
+  minutes: trSaved.minutes || 30, filters: null, filterOpen: false, detailData: null, color: trSaved.color || "type", lanes: trSaved.lanes !== false, size: trSaved.size || "freq",
   modes: new Set([...(trSaved.modes || TR_MODES.map(m => m[0])), ...(trSaved.v === 2 ? [] : ["coach"])]),   // coaches were added later
   freq: new Set(trSaved.freq || TR_FREQ.map(f => f[0])),
   meta: null, seq: 0,
 };
-const trSave = () => store.set("transit", { v: 2, day: tr.day, view: tr.view, width: tr.width, color: tr.color, lanes: tr.lanes, size: tr.size, modes: [...tr.modes], freq: [...tr.freq] });
+const trSave = () => store.set("transit", { v: 2, day: tr.day, view: tr.view, minutes: tr.minutes, width: tr.width, color: tr.color, lanes: tr.lanes, size: tr.size, modes: [...tr.modes], freq: [...tr.freq] });
 // interval class of a segment with n departures in the 12 h window (12 h = 720 min)
 const trBucket = n => { const h = 720 / n; return TR_FREQ.find(f => h <= f[0] + 1e-9)[0]; };
 const trQuery = () => new URLSearchParams({ modes: [...tr.modes].join(","), buckets: [...tr.freq].join(","), day: tr.day, centre: sdParams().centre });
@@ -147,6 +147,7 @@ const transitLayer = new TransitLayer({ pane: "transit", minZoom: 3, maxZoom: 19
 const TR_INFO_HELP = {
   lines: '<div class="empty">Click a line to see which services use that section and how often they run.</div>',
   stations: '<div class="empty">Click a station to see which types of line stop there and how often.</div>',
+  reach: '<div class="empty">Click the map: how far you get in the chosen time.</div>',
 };
 function trRenderControls() {
   document.querySelectorAll("#trn-day button").forEach(b => b.classList.toggle("on", b.dataset.day === tr.day));
@@ -158,6 +159,8 @@ function trRenderControls() {
   $("trn-lines-opts").hidden = tr.view !== "lines";
   trRenderFilters();
   $("trn-stations-opts").hidden = tr.view !== "stations";
+  $("trn-reach-opts").hidden = tr.view !== "reach";
+  $("rch-min").value = tr.minutes; $("rch-val").textContent = tr.minutes;
   $("trn-modes").innerHTML = TR_MODES.map(([id, name, hint, c]) => `
     <label class="tr-mode${tr.modes.has(id) ? "" : " off"}"><input type="checkbox" data-mode="${id}"${tr.modes.has(id) ? " checked" : ""}>
       <span class="sw" style="background:${c}"></span><span class="nm">${name}</span><small>${hint}</small></label>`).join("");
@@ -168,6 +171,7 @@ function trRenderControls() {
   const zmin = Math.min(...[...tr.modes].map(m => TR_MIN_ZOOM[m]));
   $("tr-note").innerHTML = (tr.modes.size && map.getZoom() < zmin ? `<b>Zoom in to see the selected lines (from zoom ${zmin}).</b><br>` : "")
     + `Interval = average time between departures from 07:00 to 19:00 in the busier direction, all lines of that type together${day ? ` (timetable of ${day})` : ""}.
+       ${tr.view === "reach" ? `Reach: walk ${WALK_KMH} km/h × ${DETOUR} detour to the stops and on from the last stop; wait = ½ interval; average day, not the exact timetable.` : ""}
        ${tr.view === "stations" ? "Dot area = departures from the station (all types together); the colours show how they split between the types of line (names from zoom 14)." : tr.width === "freq" ? "Line width = frequency (from zoom 14 exactly proportional: every 5 min is twice as wide as every 10 min)." : "All lines have the same width."}
        Lines follow the real tracks and roads where OpenStreetMap has the route, else straight between stops.
        Timetables: ${esc(dataInfo.transit_name || "–")}.`;
@@ -185,7 +189,7 @@ function setTransit(on) {
       tr.meta = await r.json(); trRenderControls();
     }).catch(e => { $("tr-info").innerHTML = `<div class="empty" style="color:#b91c1c">${esc(e.message)}</div>`; });
   } else {
-    map.removeLayer(transitLayer); inspectMark.clearLayers(); tr.seq++; tr.lastClick = null; tr.counts = null; tr.on = false; trShowCentres();
+    map.removeLayer(transitLayer); inspectMark.clearLayers(); reachMark.clearLayers(); tr.seq++; tr.lastClick = null; tr.counts = null; tr.on = false; trShowCentres();
   }
   tr.on = on;
   $("sidebar").classList.toggle("trn-open", on);
@@ -199,7 +203,7 @@ $("pop-btn").addEventListener("click", () => {       // Population tool = the po
   $("q").value = "population"; search();
 });
 $("trn-close").addEventListener("click", () => setTransit(false));
-$("trn-view").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { tr.view = b.dataset.view; tr.lastClick = null; $("tr-info").innerHTML = TR_INFO_HELP[tr.view]; inspectMark.clearLayers(); trRefresh(); } });
+$("trn-view").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { tr.view = b.dataset.view; tr.lastClick = null; reachMark.clearLayers(); $("tr-info").innerHTML = TR_INFO_HELP[tr.view]; inspectMark.clearLayers(); trRefresh(); } });
 $("trn-color").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { tr.color = b.dataset.color; trRefresh(); } });
 $("trn-size").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { tr.size = b.dataset.size; trRefresh(); } });
 $("trn-lanes").addEventListener("change", e => { tr.lanes = e.target.checked; trRefresh(); });
@@ -364,6 +368,7 @@ async function trLookup(latlng) {
   L.circleMarker(latlng, { radius: 9, color: "#e11d48", weight: 3, fill: false, interactive: false }).addTo(inspectMark);
   $("tr-info").innerHTML = '<div class="empty">Looking up…</div>';
   const dayName = { wd: "Weekday", sa: "Saturday", su: "Sunday" }[tr.day];
+  if (tr.view === "reach") return trReach(latlng, seq);
   try {
     const r = await fetch(`${API}/transit/at?${new URLSearchParams({ lat, lon: lng, zoom: map.getZoom(), view: tr.view })}&${trQuery()}`);
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
@@ -399,6 +404,33 @@ async function trLookup(latlng) {
   }
 }
 map.on("click", e => { if (tr.on) trLookup(e.latlng); });
+
+// Reach: the area you get to from the clicked point within tr.minutes (circles around the stops, merged on the server)
+const WALK_KMH = 4.5, DETOUR = 1.2;       // as on the server (backend/population.py)
+const reachMark = L.layerGroup().addTo(map);
+async function trReach(latlng, seq) {
+  reachMark.clearLayers();
+  try {
+    const r = await fetch(`${API}/transit/reach?${new URLSearchParams({ lat: latlng.lat, lon: latlng.lng, minutes: tr.minutes, day: tr.day, modes: [...tr.modes].join(",") })}`);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+    const d = await r.json();
+    if (seq !== tr.seq) return;
+    L.geoJSON(d.geometry, { interactive: false, style: { color: "#e11d48", weight: 2, fillColor: "#e11d48", fillOpacity: 0.22 } }).addTo(reachMark);
+    $("tr-info").innerHTML = `<table class="reach">
+      <tr><td>Time</td><td><b>${d.minutes}</b> min</td></tr>
+      <tr><td>Area</td><td><b>${d.area_km2.toLocaleString()}</b> km²</td></tr>
+      <tr><td>Population</td><td><b>${d.population == null ? dash : d.population.toLocaleString()}</b></td></tr>
+      <tr><td>Stops</td><td><b>${d.stops.toLocaleString()}</b></td></tr></table>`;
+  } catch (err) {
+    if (seq === tr.seq) $("tr-info").innerHTML = `<div class="empty" style="color:#b91c1c">${esc(err.message)}</div>`;
+  }
+}
+let reachTimer;
+$("rch-min").addEventListener("input", e => {
+  tr.minutes = +e.target.value; $("rch-val").textContent = tr.minutes; trSave();
+  clearTimeout(reachTimer);
+  reachTimer = setTimeout(() => { if (tr.on && tr.view === "reach" && tr.lastClick) trLookup(tr.lastClick); }, 300);
+});
 
 // "Details": the station window (a page of its own, so it can grow without crowding the sidebar)
 function openStationWindow(st) {

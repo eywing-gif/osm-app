@@ -1,6 +1,6 @@
 """Download a GTFS feed and build its transit database transit_<feed>.
 
-    venv/bin/python -m pipeline.transit gtfs_de [--zip path/to/feed.zip] [--from snap|centres|lines]
+    venv/bin/python -m pipeline.transit gtfs_de [--zip path/to/feed.zip] [--from snap|centres|lines|links]
 
 Steps: segments + stations (gtfs) → real course from the map data (snap) → city centres (centres) → lines and
 statistics per station (lines). Needs the map database for the last three; works without (straight lines).
@@ -24,7 +24,7 @@ def main(feed: str, zip_path=None, start="gtfs"):
         if not zip_path.exists():
             stage(0, 10)
             download(info["url"], zip_path, "download")
-    order = ["gtfs", "snap", "centres", "lines"]
+    order = ["gtfs", "snap", "centres", "lines", "links"]
     todo = lambda step: order.index(step) >= order.index(start)       # `start`: resume a failed run at this step
     stage(10, 12)
     progress(0, "reading the feed")
@@ -42,8 +42,12 @@ def main(feed: str, zip_path=None, start="gtfs"):
         stage(75, 80)
         progress(0, "city centres")
         centres.main(db)
-    stage(80, 100)
-    lines.main(feed_data, db)
+    if todo("lines"):
+        stage(80, 100)
+        lines.main(feed_data, db)
+    if start == "links":                    # an older timetable: add the hops for the travel-time search
+        stage(12, 100)
+        gtfs.build_links(feed_data, db)
     if own:
         zip_path.unlink(missing_ok=True)       # the numbers are in the database now
 

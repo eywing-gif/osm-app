@@ -17,6 +17,7 @@ from itertools import groupby
 import psycopg
 
 from backend.common import dsn
+from backend.transit import CATEGORIES
 from .util import log, progress
 
 WINDOW = (7 * 3600, 19 * 3600)   # departures counted in this time window
@@ -150,14 +151,68 @@ class Feed:
             yield (*info, [(sid, hms(a) if a else None, hms(d) if d else None) for _, sid, a, d in stops])
 
 
+class Links:
+    """Hops of every line from one station to the next, per direction: departures in the window (per reference day) and
+    the mean ride time. The travel-time search (backend/reach.py) runs on this: waiting = half the interval of the line."""
+
+    def __init__(self):
+        self.hops = {}       # (from, to, line name, category) -> [wd, sa, su, rides, seconds]
+
+    def add(self, cat, short, mask, stops):
+        for (a, _, dep), (b, arr, dep_b) in zip(stops, stops[1:]):
+            t = arr if arr is not None else dep_b
+            if a == b or dep is None or t is None or t < dep or not WINDOW[0] <= dep < WINDOW[1]:
+                continue
+            h = self.hops.setdefault((a, b, short, cat), [0, 0, 0, 0, 0])
+            for bit in range(3):
+                if mask >> bit & 1:
+                    h[bit] += 1
+            h[3] += 1
+            h[4] += t - dep
+
+    def write(self, conn, coord, names):
+        """Tables transit_stop (id, name, lon, lat) and transit_link (a, b: stop ids; cat: index in CATEGORIES; line: id; n_*; sec)."""
+        ids, line_ids = {}, {}
+        for a, b, *_ in self.hops:
+            for sid in (a, b):
+                if sid in coord and sid not in ids:
+                    ids[sid] = len(ids)
+        conn.execute("DROP TABLE IF EXISTS transit_link, transit_stop")
+        conn.execute("CREATE TABLE transit_stop (id int PRIMARY KEY, name text, lon float8, lat float8)")
+        with conn.cursor().copy("COPY transit_stop FROM STDIN") as cp:
+            for sid, i in ids.items():
+                cp.write_row((i, names.get(sid), *coord[sid]))
+        conn.execute("CREATE TABLE transit_link (a int, b int, cat smallint, line int, n_wd int, n_sa int, n_su int, sec int)")
+        with conn.cursor().copy("COPY transit_link FROM STDIN") as cp:
+            for (a, b, short, cat), (wd, sa, su, rides, sec) in self.hops.items():
+                if a in ids and b in ids:
+                    cp.write_row((ids[a], ids[b], CATEGORIES.index(cat), line_ids.setdefault((short, cat), len(line_ids)), wd, sa, su, round(sec / rides)))
+        conn.execute("CREATE INDEX ON transit_link (a)")
+        log(f"{len(self.hops):,} hops of {len(line_ids):,} lines, {len(ids):,} stops")
+
+
+def build_links(feed: Feed, db: str):
+    """Only the hops (for a timetable that was installed before they existed): `python -m pipeline.transit <feed> --from links`."""
+    links = Links()
+    for n, (cat, short, mask, stops) in enumerate(feed.trip_stops()):
+        if n % 20000 == 0:
+            progress(100 * min(1, n / max(1, len(feed.trips))), f"{n:,} trips")
+        links.add(cat, short, mask, stops)
+    with psycopg.connect(dsn(db)) as conn:
+        links.write(conn, feed.coord, feed.names)
+        conn.commit()
+
+
 def build(feed: Feed, db: str):
     """Count departures per segment and station; write the first tables of the database."""
     edges = {}          # (a, b, cat) -> [wd a->b, wd b->a, sa a->b, sa b->a, su a->b, su b->a]   (a < b)
     lines = defaultdict(lambda: defaultdict(int))     # (a, b, cat) -> line name -> weekday departures
     departures = defaultdict(lambda: [0, 0, 0])       # (station, cat) -> [weekday, saturday, sunday] departures in the window
     rows = 0
+    links = Links()
     for n, (cat, short, mask, stops) in enumerate(feed.trip_stops()):
         rows += len(stops)
+        links.add(cat, short, mask, stops)
         if n % 20000 == 0:
             progress(100 * min(1, n / max(1, len(feed.trips))), f"{n:,} trips")
         for sid, _, dep in stops[:-1]:                 # the last stop is not a departure
@@ -203,6 +258,7 @@ def build(feed: Feed, db: str):
         conn.execute("ALTER TABLE transit_station ADD COLUMN geom geometry(Point, 4326)")
         conn.execute("UPDATE transit_station SET geom = ST_SetSRID(ST_MakePoint(lon, lat), 4326)")
         conn.execute("CREATE INDEX ON transit_station USING gist (geom)")
+        links.write(conn, coord, names)
         conn.execute("CREATE TABLE transit_meta AS SELECT %s::text AS wd, %s::text AS sa, %s::text AS su", [str(feed.refs[k]) for k in DAYS])
         conn.commit()
         conn.execute("ANALYZE")
