@@ -74,6 +74,10 @@
             <button type="button" data-view="reach" role="radio">Reach</button>
           </div>
           <div id="trn-reach-opts">
+            <div id="rch-access" class="seg" role="radiogroup" aria-label="To and from the stops">
+              <button type="button" data-access="walk" role="radio">Walk</button>
+              <button type="button" data-access="bike" role="radio">Bike</button>
+            </div>
             <label class="tr-check">Time <b id="rch-val"></b> min
               <input type="range" id="rch-min" min="5" max="120" step="5" aria-label="Travel time in minutes" style="flex:1"></label>
           </div>
@@ -191,6 +195,7 @@
       <div id="notice" hidden><span></span><button type="button">Settings</button></div>
       <nav id="toolbar" aria-label="Tools">
         <button type="button" id="pop-btn" title="Inhabitants of an area">Population</button>
+        <button type="button" id="road-btn" title="Lane-km of an area">Roads</button>
         <button type="button" id="trn-btn" title="Public transport" aria-expanded="false">Transit</button>
         <button type="button" id="lu-btn" title="Land use: OSM tags" aria-expanded="false">Landuse</button>
         <button type="button" id="insp-btn" title="Click the map: everything at that point" aria-expanded="false">Point info</button>
@@ -224,6 +229,7 @@
   <script src="/static/library.js"></script>
   <script src="/static/inspect.js"></script>
   <script src="/static/landuse.js"></script>
+  <script src="/static/roads.js"></script>
   <script src="/static/transit.js"></script>
 </body>
 </html>

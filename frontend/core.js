@@ -20,7 +20,7 @@ async function loadDataInfo(first) {
   updateLegend(); checkLayerData();
   fillPopSizes();
   overlays[POPULATION].redraw();      // grid or timetables may have changed: draw the layers again
-  for (const n of ["Built-up area (GHS)", "Non-residential built-up (GHS)", PER_PERSON]) overlays[n].redraw();
+  for (const n of ["Built-up area (GHS)", "Non-residential built-up (GHS)", PER_PERSON, ROADS]) overlays[n].redraw();
   if (!first && typeof trRefresh === "function") trRefresh();
 }
 window.dataChanged = () => loadDataInfo(false);

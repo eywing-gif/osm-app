@@ -22,12 +22,12 @@ const trName = Object.fromEntries(TR_MODES.map(m => [m[0], m[1]]));
 const trSaved = store.get("transit", {});
 const tr = {
   on: false, day: trSaved.day || "wd", view: trSaved.view || "lines", width: trSaved.width || "freq",
-  minutes: trSaved.minutes || 30, filters: null, filterOpen: false, detailData: null, color: trSaved.color || "type", lanes: trSaved.lanes !== false, size: trSaved.size || "freq",
+  minutes: trSaved.minutes || 30, access: trSaved.access || "walk", filters: null, filterOpen: false, detailData: null, color: trSaved.color || "type", lanes: trSaved.lanes !== false, size: trSaved.size || "freq",
   modes: new Set([...(trSaved.modes || TR_MODES.map(m => m[0])), ...(trSaved.v === 2 ? [] : ["coach"])]),   // coaches were added later
   freq: new Set(trSaved.freq || TR_FREQ.map(f => f[0])),
   meta: null, seq: 0,
 };
-const trSave = () => store.set("transit", { v: 2, day: tr.day, view: tr.view, minutes: tr.minutes, width: tr.width, color: tr.color, lanes: tr.lanes, size: tr.size, modes: [...tr.modes], freq: [...tr.freq] });
+const trSave = () => store.set("transit", { v: 2, day: tr.day, view: tr.view, minutes: tr.minutes, access: tr.access, width: tr.width, color: tr.color, lanes: tr.lanes, size: tr.size, modes: [...tr.modes], freq: [...tr.freq] });
 // interval class of a segment with n departures in the 12 h window (12 h = 720 min)
 const trBucket = n => { const h = 720 / n; return TR_FREQ.find(f => h <= f[0] + 1e-9)[0]; };
 const trQuery = () => new URLSearchParams({ modes: [...tr.modes].join(","), buckets: [...tr.freq].join(","), day: tr.day, centre: sdParams().centre });
@@ -160,6 +160,7 @@ function trRenderControls() {
   trRenderFilters();
   $("trn-stations-opts").hidden = tr.view !== "stations";
   $("trn-reach-opts").hidden = tr.view !== "reach";
+  document.querySelectorAll("#rch-access button").forEach(b => b.classList.toggle("on", b.dataset.access === tr.access));
   $("rch-min").value = tr.minutes; $("rch-val").textContent = tr.minutes;
   $("trn-modes").innerHTML = TR_MODES.map(([id, name, hint, c]) => `
     <label class="tr-mode${tr.modes.has(id) ? "" : " off"}"><input type="checkbox" data-mode="${id}"${tr.modes.has(id) ? " checked" : ""}>
@@ -171,7 +172,7 @@ function trRenderControls() {
   const zmin = Math.min(...[...tr.modes].map(m => TR_MIN_ZOOM[m]));
   $("tr-note").innerHTML = (tr.modes.size && map.getZoom() < zmin ? `<b>Zoom in to see the selected lines (from zoom ${zmin}).</b><br>` : "")
     + `Interval = average time between departures from 07:00 to 19:00 in the busier direction, all lines of that type together${day ? ` (timetable of ${day})` : ""}.
-       ${tr.view === "reach" ? `Reach: walk ${WALK_KMH} km/h × ${DETOUR} detour to the stops and on from the last stop; wait = ½ interval; average day, not the exact timetable.` : ""}
+       ${tr.view === "reach" ? `Reach: to / from the stops ${tr.access === "bike" ? `bike ${BIKE_KMH} km/h` : `walk ${WALK_KMH} km/h`} × ${DETOUR} detour; changes on foot (≤ 200 m); wait = ½ interval; average day, not the exact timetable.` : ""}
        ${tr.view === "stations" ? "Dot area = departures from the station (all types together); the colours show how they split between the types of line (names from zoom 14)." : tr.width === "freq" ? "Line width = frequency (from zoom 14 exactly proportional: every 5 min is twice as wide as every 10 min)." : "All lines have the same width."}
        Lines follow the real tracks and roads where OpenStreetMap has the route, else straight between stops.
        Timetables: ${esc(dataInfo.transit_name || "–")}.`;
@@ -406,18 +407,18 @@ async function trLookup(latlng) {
 map.on("click", e => { if (tr.on) trLookup(e.latlng); });
 
 // Reach: the area you get to from the clicked point within tr.minutes (circles around the stops, merged on the server)
-const WALK_KMH = 4.5, DETOUR = 1.2;       // as on the server (backend/population.py)
+const WALK_KMH = 4.5, BIKE_KMH = 15, DETOUR = 1.2;       // as on the server (backend/population.py, reach.py)
 const reachMark = L.layerGroup().addTo(map);
 async function trReach(latlng, seq) {
   reachMark.clearLayers();
   try {
-    const r = await fetch(`${API}/transit/reach?${new URLSearchParams({ lat: latlng.lat, lon: latlng.lng, minutes: tr.minutes, day: tr.day, modes: [...tr.modes].join(",") })}`);
+    const r = await fetch(`${API}/transit/reach?${new URLSearchParams({ lat: latlng.lat, lon: latlng.lng, minutes: tr.minutes, access: tr.access, day: tr.day, modes: [...tr.modes].join(",") })}`);
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
     const d = await r.json();
     if (seq !== tr.seq) return;
     L.geoJSON(d.geometry, { interactive: false, style: { color: "#e11d48", weight: 2, fillColor: "#e11d48", fillOpacity: 0.22 } }).addTo(reachMark);
     $("tr-info").innerHTML = `<table class="reach">
-      <tr><td>Time</td><td><b>${d.minutes}</b> min</td></tr>
+      <tr><td>Time</td><td><b>${d.minutes}</b> min · ${d.access === "bike" ? "Bike" : "Walk"}</td></tr>
       <tr><td>Area</td><td><b>${d.area_km2.toLocaleString()}</b> km²</td></tr>
       <tr><td>Population</td><td><b>${d.population == null ? dash : d.population.toLocaleString()}</b></td></tr>
       <tr><td>Stops</td><td><b>${d.stops.toLocaleString()}</b></td></tr></table>`;
@@ -425,6 +426,7 @@ async function trReach(latlng, seq) {
     if (seq === tr.seq) $("tr-info").innerHTML = `<div class="empty" style="color:#b91c1c">${esc(err.message)}</div>`;
   }
 }
+$("rch-access").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { tr.access = b.dataset.access; trRefresh(); } });
 let reachTimer;
 $("rch-min").addEventListener("input", e => {
   tr.minutes = +e.target.value; $("rch-val").textContent = tr.minutes; trSave();

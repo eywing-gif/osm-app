@@ -12,7 +12,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import catalog, population, reach, transit
+from . import catalog, population, reach, roads, transit
 from .common import DATA, DB_POP, PREFIX, ROOT, db_transit_name, dsn, load_state, update_state
 
 router = APIRouter(prefix="/datasets")
@@ -71,7 +71,7 @@ def overview():
     pa, fa, ba = _active("population", pops), _active("transit", feeds), _active("built", builts)
     return {
         "osm": {"regions": [{**r, "bytes": have.get(r["id"]), "est": sizes.get(r["id"]), "active": r["id"] in built} for r in catalog.osm_regions()],
-                "built": built},
+                "built": built, "roads": bool(built) and _roads_ready()},
         "population": [{"id": k, **v, "installed": k in pops, "active": k == pa} for k, v in catalog.POPULATION.items()],
         "built": [{"id": k, **v, "installed": k in builts, "active": k == ba} for k, v in catalog.BUILT.items()],
         "transit": [{"id": k, **v, "installed": k in feeds, "active": k == fa, "outdated": k in feeds and outdated_transit(k)}
@@ -99,7 +99,14 @@ def active():
     ba = _active("built", installed_built())
     return {"osm": [names.get(i, i) for i in st.get("osm", {}).get("active", [])], "bbox": st.get("osm", {}).get("bbox"),
             "population_id": pa or "", "cell_m": pa and catalog.POPULATION[pa]["cell"], "population": pa and f"{catalog.POPULATION[pa]['name']} · {catalog.POPULATION[pa]['source']}", "transit_name": ta and catalog.FEEDS[ta]["name"],
-            "built_id": ba or "", "built_cell_m": ba and catalog.BUILT[ba]["cell"]}
+            "built_id": ba or "", "built_cell_m": ba and catalog.BUILT[ba]["cell"], "roads": _roads_ready()}
+
+
+def _roads_ready() -> bool:
+    try:
+        return roads.has_cells()
+    except psycopg.Error:
+        return False
 
 
 # ---------- jobs ----------
@@ -125,6 +132,7 @@ def job_status():
         JOB["done"] = True
         transit.clear_caches()
         reach.clear_caches()
+        roads.clear_caches()
         population.clear_caches()
     state = "running" if rc is None else "done" if rc == 0 else "cancelled" if rc < 0 else "failed"
     text = prog[2] if len(prog) > 2 else ""
@@ -170,6 +178,12 @@ def osm_update(req: Regions):
     return start("Update map data", "pipeline.osm", "update", *ids)
 
 
+@router.post("/osm/roads")
+def osm_roads():
+    """Road lanes per 1 km square for the Roads layer (also part of every map import)."""
+    return start("Prepare roads", "pipeline.roads")
+
+
 @router.delete("/osm/{region:path}")
 def osm_delete(region: str):
     f = catalog.osm_file(_valid_regions([region])[0])
@@ -212,6 +226,7 @@ def activate(kind: str, ds: str):
     update_state(lambda st: st.setdefault(kind, {}).__setitem__("active", ds))
     transit.clear_caches()
     reach.clear_caches()
+    roads.clear_caches()
     population.clear_caches()
     return {"ok": True}
 
@@ -228,5 +243,6 @@ def remove(kind: str, ds: str):
     update_state(lambda st: st.get(kind, {}).get("active") == ds and st[kind].pop("active"))
     transit.clear_caches()
     reach.clear_caches()
+    roads.clear_caches()
     population.clear_caches()
     return {"ok": True}

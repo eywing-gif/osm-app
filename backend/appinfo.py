@@ -25,16 +25,16 @@ def parse(v: str) -> tuple:
 
 def checks() -> list[dict]:
     """What the machine needs: [{name, ok, hint}]."""
-    out = [{"name": c, "ok": bool(shutil.which(c)), "hint": "sudo apt install " + pkg}
-           for c, pkg in (("psql", "postgresql"), ("osm2pgsql", "osm2pgsql"), ("git", "git"))]
+    fix = "run in the app folder:  sh install.sh"
+    out = [{"name": c, "ok": bool(shutil.which(c)), "hint": fix} for c in ("psql", "osm2pgsql", "git")]
     try:
         with psycopg.connect("dbname=postgres") as c:
             role = c.execute("SELECT rolcreatedb OR rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0]
             gis = c.execute("SELECT count(*) FROM pg_available_extensions WHERE name = 'postgis'").fetchone()[0]
-        out += [{"name": "database access", "ok": bool(role), "hint": "sudo -u postgres createuser -s $USER"},
-                {"name": "postgis", "ok": bool(gis), "hint": "sudo apt install postgis"}]
+        out += [{"name": "database access", "ok": bool(role), "hint": fix},
+                {"name": "postgis", "ok": bool(gis), "hint": fix}]
     except psycopg.Error:
-        out.append({"name": "database access", "ok": False, "hint": "sudo systemctl start postgresql; sudo -u postgres createuser -s $USER"})
+        out.append({"name": "database access", "ok": False, "hint": fix})
     return out
 
 

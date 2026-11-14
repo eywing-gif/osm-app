@@ -368,3 +368,9 @@
     #notice[hidden] { display: none; }
     #notice button { border: 1px solid #fdba74; background: #fff; border-radius: 6px; padding: 1px 8px; font: inherit; cursor: pointer; }
     #legend .clc-list { max-height: 190px; overflow-y: auto; width: 200px; padding-right: 4px; }
+
+    #legend > div:not([hidden]) ~ div:not([hidden]) { margin-top: 8px; }   /* space between the visible legend blocks */
+    .pop-stats h4 .rd-all { float: right; text-transform: none; letter-spacing: 0; }
+    .pop-stats h4 .rd-all a { cursor: pointer; color: var(--accent); margin-left: 6px; }
+    .pop-stats .rd-type { cursor: pointer; }
+    .pop-stats .rd-type.off span, .pop-stats .rd-type.off b { color: var(--muted); }

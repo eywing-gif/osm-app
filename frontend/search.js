@@ -91,6 +91,7 @@ async function search() {
   closeLibrary();
   controller?.abort();
   if (isPopulationQuery(q)) return populationSearch();
+  if (isRoadsQuery(q)) return roadsSearch();
   if (source === "online" && !area && map.getZoom() < ONLINE_MIN_ZOOM) {
     clearResults();
     setStatus("Zoom in further (or pick an area) to search online.");

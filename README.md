@@ -1,29 +1,41 @@
 # OSM Tag Search
 
-Desktop app: search OpenStreetMap tags, point info, population (grid), public transport, land use (OSM, CORINE, built-up).
+Desktop app: search OpenStreetMap tags, point info, population (grid), roads (lane-km), public transport (lines, reach), land use (OSM, CORINE, built-up).
 
 ## Install
-```
-git clone https://github.com/eywing-gif/osm-app && cd osm-app
-sh install.sh        # checks system, creates venv, adds menu entry
-python3 app.py       # desktop window; or: venv/bin/uvicorn backend.main:app  → http://localhost:8000
-```
-Needs Python 3, PyGObject + WebKitGTK 4.1, PostgreSQL + PostGIS, osm2pgsql, git, and a PostgreSQL user that may create databases.
-`install.sh` prints the exact commands for your system when something is missing. Arch:
+
+Linux only (Ubuntu / Debian, Arch / Manjaro, Fedora, openSUSE). Open a terminal and paste these lines one after the other:
 
 ```sh
-sudo pacman -S --needed python python-gobject webkit2gtk-4.1 postgresql postgis osm2pgsql git
-sudo -u postgres initdb -D /var/lib/postgres/data     # first time only
-sudo systemctl enable --now postgresql
-sudo -u postgres createuser -s $USER
+git clone https://github.com/eywing-gif/osm-app.git ~/osm-app
+```
+```sh
+sh ~/osm-app/install.sh
 ```
 
-Debian / Ubuntu: `sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1 postgresql postgis osm2pgsql git`, then `sudo -u postgres createuser -s $USER`.
-⚙ Settings → **App** shows what is missing.
+No `git`? Download the [zip](https://github.com/eywing-gif/osm-app/archive/refs/heads/main.zip), unpack it,
+open a terminal in the unpacked folder and run `sh install.sh`.
+
+The script asks for your password once and then does everything itself: installs the system packages
+(PostgreSQL + PostGIS, osm2pgsql, WebKitGTK, Python), starts the database server, creates your database user,
+the Python environment (`venv/`) and a menu entry. If something goes wrong it says what – fix it and simply
+run `sh install.sh` again (also the cure after a big system update).
+
+**Start:** application menu → *OSM Tag Search* (or `python3 ~/osm-app/app.py`).
+**First start:** ⚙ → download a map region, population grid, timetables.
+
+## Uninstall
+
+```sh
+sh ~/osm-app/uninstall.sh
+```
+
+Removes the menu entry, the app's databases, the downloads and – if you say yes – the app folder.
+System packages (PostgreSQL, …) stay; the script prints the command to remove them too.
 
 ## Update
 ⚙ Settings → App → **Check** → **Update** → **Restart**. Works for a git clone and for a zip download
-(your `data/` and `venv/` stay).
+(your `data/` and `venv/` stay). Data: ⚙ → each dataset has its own **Update**.
 
 ## Release (maintainer)
 1. Raise `version` in `app.json`, commit, push.
@@ -41,9 +53,9 @@ Debian / Ubuntu: `sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1 po
 Downloads and the import state live in `data/` (`state.json`). One download job runs at a time.
 
 ## Layout
-- `backend/` FastAPI: `main` (search), `areas`, `features` (point info), `population` (grid tiles), `landuse` (OSM landuse), `transit`, `datasets` (settings API), `catalog` (what can be downloaded), `appinfo` (version, update), `common` (paths, databases, state)
-- `pipeline/` imports, run as `venv/bin/python -m pipeline.<name>`: `osm`, `population`, `built`, `transit` (= `gtfs` → `snap` → `centres` → `lines`), `update`
-- `frontend/` `index.html` + `app.css`; scripts in load order: `core` (map, sidebar), `layers` (overlays, legend), `search`, `library`, `inspect`, `landuse`, `transit`; `settings.js` / `settings.css`; `station.html` (station window)
+- `backend/` FastAPI: `main` (search), `areas`, `features` (point info), `population` (grid tiles), `landuse` (OSM landuse), `roads` (lane-km), `transit`, `reach` (isochrones), `datasets` (settings API), `catalog` (what can be downloaded), `appinfo` (version, update), `common` (paths, databases, state)
+- `pipeline/` imports, run as `venv/bin/python -m pipeline.<name>`: `osm` (+ `roads`), `population`, `built`, `transit` (= `gtfs` → `snap` → `centres` → `lines`), `update`
+- `frontend/` `index.html` + `app.css`; scripts in load order: `core` (map, sidebar), `layers` (overlays, legend), `search`, `library`, `inspect`, `landuse`, `roads`, `transit`; `settings.js` / `settings.css`; `station.html` (station window)
 
 Another dataset: add an entry to `backend/catalog.py` (and an importer in `pipeline/` if the format is new).
 Tests / a second set of data: `OSMAPP_DATA=/other/dir OSMAPP_DB_PREFIX=t_ …` uses its own folder and databases.

@@ -2,7 +2,8 @@
 
 Model (average day, no exact timetable): walk to the stops around the point, ride, change, walk on. A line is
 boarded after waiting half its interval (07-19 h, capped); riding takes the mean time of the line's hops; changing
-between stops up to TRANSFER_M apart is a walk. Walking uses the same speed and detour factor as the catchment.
+between stops up to TRANSFER_M apart is a walk. To the first stop and from the last one: on foot (speed and detour
+factor as the catchment) or by bike (BIKE_KMH).
 The result is the union of circles around the points reached: radius = what is left of the time, walked.
 Data: tables transit_stop / transit_link of the timetable database (pipeline/gtfs.py, class Links).
 """
@@ -23,7 +24,11 @@ router = APIRouter(prefix="/transit")
 MAX_WAIT = 30 * 60        # s: waiting for a rare line is not longer than this
 BOARD = 60                # s: getting from the platform into the vehicle
 TRANSFER_M = 200          # change between stops this close by foot
-MAX_WALK = 15 * 60        # s: longest walk from the clicked point to the first stop
+MAX_WALK = 15 * 60        # s: longest way (walk / ride) from the clicked point to the first stop
+# bike, door to door incl. stops at junctions: GPS studies of city cyclists 14–18 km/h (London, peak ~16),
+# medians 17.6–21.7 km/h (Hamburg app data), 18 km/h occasional riders (Helsinki) -> 15 km/h, careful
+BIKE_KMH = 15.0
+ACCESS = {"walk": population.WALK_KMH, "bike": BIKE_KMH}
 MIN_RADIUS = 40           # m: smaller circles are left out
 WINDOW_S = 12 * 3600
 DEG_M = 111320.0          # metres per degree of latitude
@@ -95,14 +100,15 @@ def clear_caches():
     graph.cache_clear()
 
 
-def search(g: Graph, lon: float, lat: float, limit: int, day: str, allowed: set[int], mps: float) -> dict[int, float]:
-    """Earliest arrival (s) at every stop reachable within `limit` seconds. mps: straight-line metres per second on foot."""
+def search(g: Graph, lon: float, lat: float, limit: int, day: str, allowed: set[int], mps: float, access_mps: float) -> dict[int, float]:
+    """Earliest arrival (s) at every stop reachable within `limit` seconds.
+    mps / access_mps: straight-line metres per second on foot (changes) / to the first stop (walk or bike)."""
     best_off, best_on = {}, {}
     heap = []
-    ids, dist = g.around(lon, lat, min(limit, MAX_WALK) * mps)
+    ids, dist = g.around(lon, lat, min(limit, MAX_WALK) * access_mps)
     for s, d in zip(ids.tolist(), dist.tolist()):
-        best_off[s] = d / mps
-        heap.append((d / mps, s, -1))
+        best_off[s] = d / access_mps
+        heap.append((d / access_mps, s, -1))
     heapq.heapify(heap)
     n_day, start, nb, cat, line, sec = g.n[day], g.start, g.b, g.cat, g.line, g.sec
     while heap:
@@ -148,17 +154,19 @@ SELECT ST_AsGeoJSON(ST_SimplifyPreserveTopology(u, 0.00008), 5)::jsonb, ST_Area(
 
 @router.get("/reach")
 def reach(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180), minutes: int = Query(30, ge=1, le=180),
-          day: str = "wd", modes: str = "", speed_kmh: float = population.WALK_KMH, detour: float = population.DETOUR):
+          day: str = "wd", modes: str = "", access: str = "walk", detour: float = population.DETOUR):
     if day not in DAYS:
         raise HTTPException(400, "day must be wd, sa or su")
     allowed = {i for i, c in enumerate(CATEGORIES) if c in modes.split(",")} if modes else set(range(len(CATEGORIES)))
     g = graph(active_transit())
-    mps = speed_kmh / 3.6 / detour
+    if access not in ACCESS:
+        raise HTTPException(400, "access must be walk or bike")
+    mps, access_mps = population.WALK_KMH / 3.6 / detour, ACCESS[access] / 3.6 / detour
     limit = minutes * 60
-    best = search(g, lon, lat, limit, day, allowed, mps)
-    xs, ys, rs = [lon], [lat], [limit * mps]           # the walk from the point itself
+    best = search(g, lon, lat, limit, day, allowed, mps, access_mps)
+    xs, ys, rs = [lon], [lat], [limit * access_mps]    # straight from the point itself
     for s, t in best.items():
-        r = (limit - t) * mps
+        r = (limit - t) * access_mps
         if r >= MIN_RADIUS:
             xs.append(g.lonl[s]); ys.append(g.latl[s]); rs.append(r)
     with transit_db() as conn:
@@ -169,4 +177,4 @@ def reach(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-18
     except HTTPException:
         people = None                                  # no population data installed
     return {"geometry": geometry, "area_km2": round(km2, 1 if km2 >= 10 else 2), "population": people, "stops": len(best),
-            "minutes": minutes, "speed_kmh": speed_kmh, "detour": detour}
+            "minutes": minutes, "access": access, "speed_kmh": ACCESS[access], "detour": detour}

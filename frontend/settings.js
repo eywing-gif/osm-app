@@ -72,6 +72,7 @@
     const missing = miss.length, missSize = miss.reduce((a, r) => a + (r.est || 0), 0);
     $("set-body").innerHTML = `<div class="empty" style="padding:0 0 6px">Map data for search, point info, tracks. Pick regions, then Apply.</div><input class="search" placeholder="Search region" value="${esc(filter)}" data-a="filter">${osmRows()}`;
     $("set-apply").innerHTML = `<span>${data.osm.built.length ? "Active: " + data.osm.built.map(i => esc(data.osm.regions.find(r => r.id === i)?.name ?? i)).join(", ") : "No map data"}</span>
+      ${data.osm.built.length && !data.osm.roads ? `<button class="btn" data-a="roads" title="Needed for the Road lanes layer" ${busy() ? "disabled" : ""}>Prepare roads</button>` : ""}
       ${data.osm.built.length ? `<button class="btn" data-a="osmupd" title="Newest map data for the regions in use" ${busy() ? "disabled" : ""}>Update</button>` : ""}
       <button class="btn primary" data-a="apply" ${same || !sel.size || busy() ? "disabled" : ""}>Apply${missing ? ` · ${missing} to download${missSize ? " (" + mb(missSize) + ")" : ""}` : ""}</button>`;
   }
@@ -144,6 +145,7 @@
     if (a === "cancel") await call("POST", "/job/cancel");
     else if (a === "get") await call("POST", "/osm/download", { regions: [id] });
     else if (a === "apply") await call("POST", "/osm/build", { regions: [...sel] });
+    else if (a === "roads") await call("POST", "/osm/roads");
     else if (a === "osmupd") { if (!confirm("Download the newest map data and build it again?")) return; await call("POST", "/osm/update", { regions: data.osm.built }); }
     else if (a === "del") { if (!confirm("Delete the download?")) return; await call("DELETE", "/osm/" + id); }
     else if (a === "inst") await call("POST", `/${tab}/${id}/install`);

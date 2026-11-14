@@ -14,16 +14,19 @@ import sys
 import urllib.request
 from pathlib import Path
 
-import gi
-gi.require_version("Gtk", "3.0")
-gi.require_version("WebKit2", "4.1")
-from gi.repository import GLib, Gtk, WebKit2  # noqa: E402
+try:
+    import gi
+    gi.require_version("Gtk", "3.0")
+    gi.require_version("WebKit2", "4.1")
+    from gi.repository import GLib, Gtk, WebKit2  # noqa: E402
+except (ImportError, ValueError):           # no GTK / WebKit: the app opens in the web browser instead
+    gi = None
 
 APP_ID = "osm-tag-search"
 ROOT = Path(__file__).resolve().parent
 PYTHON = ROOT / "venv" / "bin" / "python"
 ICON = ROOT / "icon.svg"
-LOG = Path(GLib.get_user_cache_dir()) / APP_ID / "server.log"
+LOG = Path.home() / ".cache" / APP_ID / "server.log"
 
 LOADING_HTML = """<html><body style="font:15px system-ui;display:grid;place-items:center;height:90vh;color:#555">
 <div>Starting OSM Tag Search…</div></body></html>"""
@@ -135,11 +138,36 @@ class App:
         Gtk.main_quit()
 
 
+def browser_mode():
+    """Without GTK / WebKit: run the backend and show the app in the normal web browser (Ctrl+C stops it)."""
+    import time
+    import webbrowser
+    port = free_port()
+    url = f"http://127.0.0.1:{port}/"
+    server = subprocess.Popen([str(PYTHON), "-m", "uvicorn", "backend.main:app", "--host", "127.0.0.1", "--port", str(port)], cwd=ROOT)
+    for _ in range(150):
+        try:
+            urllib.request.urlopen(url, timeout=0.5)
+            break
+        except OSError:
+            if server.poll() is not None:
+                sys.exit("The backend did not start (see above). Is PostgreSQL running? Run:  sh install.sh")
+            time.sleep(0.2)
+    print(f"OSM Tag Search: {url}  (no desktop window: WebKitGTK missing) – stop with Ctrl+C")
+    webbrowser.open(url)
+    try:
+        server.wait()
+    except KeyboardInterrupt:
+        server.terminate()
+
+
 def main():
+    if not PYTHON.exists() or subprocess.run([str(PYTHON), "-c", "import fastapi"], capture_output=True).returncode:
+        sys.exit("The app is not installed completely (venv/). Run in the app folder:  sh install.sh")
+    if gi is None:
+        return browser_mode()
     GLib.set_prgname(APP_ID)  # matches the .desktop file, so GNOME shows the right icon
     GLib.set_application_name("OSM Tag Search")
-    if not PYTHON.exists():
-        sys.exit(f"Missing {PYTHON}. Create it with: python3 -m venv venv && venv/bin/pip install -r requirements.txt")
     app = App()
     try:  # newer PyGObject moved this into GLibUnix
         gi.require_version("GLibUnix", "2.0")
