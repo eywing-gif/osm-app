@@ -160,7 +160,8 @@ const PerPersonLayer = opts => new GridCellLayer({ ...opts, spec: {
   t: ppT, color: v => v >= PP_NOBODY ? "#9aa0a6" : rampColor(PP_SCALE, ppT(v)), show: () => true, text: v => v >= PP_NOBODY ? "–" : String(v),
 } });
 
-// road lanes per 1 km square (lane-km per km² or lane-metres per inhabitant), types chosen in the Roads list
+// road lanes per 1 km square or per administrative area (roads.js): lane-km in total, per km² or per inhabitant (m);
+// the road types are chosen in the Roads list
 const ROAD_TYPES = [["motorway", "Motorway"], ["trunk", "Trunk"], ["primary", "Primary"], ["secondary", "Secondary"], ["tertiary", "Tertiary"],
   ["unclassified", "Unclassified"], ["residential", "Residential"], ["living_street", "Living street"], ["service", "Service"],
   ["driveway", "Driveway"], ["parking_aisle", "Parking aisle"], ["track", "Track"], ["pedestrian", "Pedestrian"], ["cycleway", "Cycleway"], ["footway", "Footway, path"]];
@@ -177,10 +178,17 @@ const ROAD_HINT = {     // tooltip in the Roads list (OSM highway=*)
 // default: roads for cars only (no service roads, driveways, parking aisles, tracks, foot- and cycleways)
 const ROAD_OFF = ["service", "driveway", "parking_aisle", "track", "pedestrian", "cycleway", "footway"];
 const roadSel = new Set(store.get("roadTypes3", ROAD_TYPES.map(t => t[0]).filter(t => !ROAD_OFF.includes(t))));
-let roadPer = store.get("roadPer", "area");          // area: lane-km per km² · person: lane-m per inhabitant
+let roadPer = store.get("roadPer", "area");          // total: lane-km · area: lane-km per km² · person: lane-m per inhabitant
 const ROAD_SCALE = ["#fff7ec", "#fdd49e", "#fc8d59", "#d7301f", "#7f0000", "#2b0000"];
-const ROAD_RANGE = { area: [2, 500], person: [1, 300] };
-const roadT = v => { const [lo, hi] = ROAD_RANGE[roadPer]; return Math.min(1, Math.max(0, Math.log(v / lo) / Math.log(hi / lo))); };
+const ROAD_RANGE = { total: [2, 500], area: [2, 500], person: [1, 300] };     // log scale; grid "total": per square
+const ROAD_UNIT = { total: "lane-km", area: "lane-km per km²", person: "lane-m per inhabitant" };
+const ROAD_LEVELS = { 4: ["State", "admin_level 4: Bundesland"], 6: ["County", "admin_level 6: Landkreis, kreisfreie Stadt"],
+  8: ["Town", "admin_level 8: Gemeinde, Stadt"], 9: ["Borough", "admin_level 9: Stadtbezirk"], 10: ["Quarter", "admin_level 10: Stadtteil, Ortsteil"] };
+let roadView = "off";                                 // off · grid · an admin level (roads.js)
+let roadAdminRange = null;                            // admin areas in total: the scale follows the areas shown
+const roadAdmin = L.layerGroup();                     // the areas, drawn by roads.js
+const roadRange = () => roadPer === "total" && roadView !== "grid" && roadAdminRange ? roadAdminRange : ROAD_RANGE[roadPer];
+const roadT = v => { const [lo, hi] = roadRange(); return Math.min(1, Math.max(0, Math.log(v / lo) / Math.log(hi / lo))); };
 const RoadLayer = opts => new GridCellLayer({ ...opts, spec: {
   url: (z, x, y) => `${API}/roads/grid/${z}/${x}/${y}?${new URLSearchParams({ types: [...roadSel].join(","), per: roadPer, v: dataInfo.population_id })}`,
   t: roadT, color: v => rampColor(ROAD_SCALE, roadT(v)), show: v => v > 0, text: v => String(Math.round(v)),
@@ -292,8 +300,8 @@ legend.innerHTML = `<div id="leg-pop"><b>Inhabitants per km²</b>
     <label class="op">Strength <input type="range" id="pp-op" min="20" max="100" step="5"
       value="${Math.round(store.get("ppOpacity", 0.7) * 100)}" aria-label="Built-up per person strength"></label>
     <div class="note" id="pp-note"></div></div>
-  <div id="leg-roads"><b>Road lanes</b>
-    <div class="seg" id="road-per" style="margin:4px 0;width:270px"><button type="button" data-per="area">per km²</button><button type="button" data-per="person">per person</button></div>
+  <div id="leg-roads"><b id="road-title">Road lanes</b>
+    <div class="seg" id="road-per" style="margin:4px 0;width:270px"><button type="button" data-per="total">Total</button><button type="button" data-per="area">per km²</button><button type="button" data-per="person">per person</button></div>
     <div class="grad" style="width:270px;background: linear-gradient(to right, ${ROAD_SCALE.map((c, i) => `${c} ${Math.round(i / (ROAD_SCALE.length - 1) * 100)}%`).join(", ")})"></div>
     <div class="ticks" id="road-ticks" style="position:relative;display:block;height:13px;width:270px"></div>
     <label class="op">Strength <input type="range" id="road-op" min="20" max="100" step="5"
@@ -346,17 +354,24 @@ $("pp-op").addEventListener("input", e => {
 $("road-op").addEventListener("input", e => {
   overlays[ROADS].setOpacity(e.target.value / 100);
   store.set("roadOpacity", e.target.value / 100);
+  if (typeof roadAdminRender === "function") roadAdminRender();
 });
 $("road-per").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
   roadPer = b.dataset.per; store.set("roadPer", roadPer);
-  overlays[ROADS].redraw(); updateLegend(); checkLayerData();
+  overlays[ROADS].redraw();
+  if (typeof roadAdminRender === "function") roadAdminRender();
+  updateLegend(); checkLayerData();
 });
 function renderRoadLegend() {
   document.querySelectorAll("#road-per button").forEach(b => b.classList.toggle("on", b.dataset.per === roadPer));
-  const ticks = roadPer === "area" ? [2, 10, 50, 100, 500] : [1, 3, 10, 30, 100, 300], last = ticks.at(-1);
-  $("road-ticks").innerHTML = ticks.map(v => `<span style="position:absolute;${v === last ? "right:0" : v === ticks[0] ? "left:0" : `left:${Math.round(roadT(v) * 100)}%;transform:translateX(-50%)`}">${v}${v === last ? "+" : ""}</span>`).join("");
-  $("road-note").textContent = (roadPer === "area" ? "lane-km per km²" : "lane-metres per inhabitant") + ` · 1 km squares · ${roadSel.size} of ${ROAD_TYPES.length} types (Roads list)`;
+  const [lo, hi] = roadRange(), nice = v => Number(v.toPrecision(v < 10 ? 1 : 2));
+  const ticks = roadRange() === roadAdminRange ? [0, 1, 2, 3, 4].map(i => nice(lo * (hi / lo) ** (i / 4)))
+    : roadPer === "person" ? [1, 3, 10, 30, 100, 300] : [2, 10, 50, 100, 500], last = ticks.at(-1);
+  $("road-ticks").innerHTML = ticks.map(v => `<span style="position:absolute;${v === last ? "right:0" : v === ticks[0] ? "left:0" : `left:${Math.round(roadT(v) * 100)}%;transform:translateX(-50%)`}">${v.toLocaleString()}${v === last && roadRange() !== roadAdminRange ? "+" : ""}</span>`).join("");
+  const admin = ROAD_LEVELS[roadView];
+  $("road-title").textContent = "Road lanes · " + (admin ? admin[0] : "1 km grid");
+  $("road-note").textContent = ROAD_UNIT[roadPer] + (roadPer === "total" && !admin ? " per square" : "") + ` · ${roadSel.size} of ${ROAD_TYPES.length} types (Roads)`;
 }
 $("clc-op").addEventListener("input", e => {
   overlays["CORINE land cover (2018)"].setOpacity(e.target.value / 100);
@@ -370,7 +385,7 @@ $("pop-op").addEventListener("input", e => {
 const updateLegend = () => {
   const sl = map.hasLayer(slope), pp = map.hasLayer(popLayer), cc = map.hasLayer(overlays["CORINE land cover (2018)"]);
   const bt = BUILT_NAMES.filter(n => map.hasLayer(overlays[n]));
-  const pe = map.hasLayer(overlays[PER_PERSON]), rd = map.hasLayer(overlays[ROADS]);
+  const pe = map.hasLayer(overlays[PER_PERSON]), rd = map.hasLayer(overlays[ROADS]) || map.hasLayer(roadAdmin);
   legend.classList.toggle("show", sl || pp || cc || pe || rd || bt.length > 0);
   $("leg-roads").hidden = !rd;
   if (rd) renderRoadLegend();

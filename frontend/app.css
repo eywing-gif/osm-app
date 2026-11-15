@@ -374,3 +374,8 @@
     .pop-stats h4 .rd-all a { cursor: pointer; color: var(--accent); margin-left: 6px; }
     .pop-stats .rd-type { cursor: pointer; }
     .pop-stats .rd-type.off span, .pop-stats .rd-type.off b { color: var(--muted); }
+    .pop-stats .rd-map { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+    .pop-stats .rd-map button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 3px 9px; font: inherit; font-size: 12px; cursor: pointer; }
+    .pop-stats .rd-map button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .rd-lbl span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font: 600 11px system-ui, sans-serif; color: #111;
+      text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff; pointer-events: none; }
