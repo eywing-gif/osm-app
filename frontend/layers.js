@@ -83,7 +83,18 @@ const popSetRange = () => {
 };
 popSetRange();
 const popT = d => Math.min(1, Math.max(0, (popFull(d) - popLo) / popSpan));
-let popSize = store.get("popSize", 0);               // edge of the squares in m, 0 = as fine as the data
+// grid size (footer), per tool: only the sizes that make sense for its data. 0 = auto (bigger squares when zoomed out)
+const GRID_OPTIONS = {
+  population: () => (dataInfo.cell_m || 100) >= 1000 ? [0, 1000, 2000, 5000, 10000] : [0, 100, 200, 500, 1000, 2000, 5000, 10000],
+  roads: () => [0, 1000, 2000, 5000, 10000],           // the roads are counted per 1 km square
+  transit: () => [0, 500, 1000, 2000, 5000, 10000],    // stations are points: smaller squares are mostly empty
+  amenities: () => [0, 100, 200, 500, 1000, 2000, 5000],   // the score is computed for each square: from 100 m
+};
+const sizeName = v => v ? (v >= 1000 ? v / 1000 + " km" : v + " m") : "Auto";
+const GRID_BASE = { roads: 1000, transit: 500, amenities: 100 };       // smallest square (population: the cell of its data)
+const gridSizes = store.get("gridSizes", {});
+const gridSizeFor = tool => GRID_OPTIONS[tool]().includes(gridSizes[tool]) ? gridSizes[tool] : 0;
+let gridTool = "population";                           // the grid the footer choice is for (updateLegend)
 let popLabels = store.get("popLabels", false);   // density as a number in each square
 const popShown = d => !(popRange.min > 0 && d < popRange.min) && !(popRange.max > 0 && d > popRange.max);
 const popRgb = POP_SCALE.map(([, h]) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)));
@@ -133,7 +144,7 @@ const GridCellLayer = L.GridLayer.extend({
   },
 });
 const PopDensityLayer = opts => new GridCellLayer({ ...opts, spec: {
-  url: (z, x, y) => `${API}/density/${z}/${x}/${y}?v=${dataInfo.population_id}&size=${popSize}`,
+  url: (z, x, y) => `${API}/density/${z}/${x}/${y}?v=${dataInfo.population_id}&size=${gridSizeFor("population")}`,
   t: popT, color: popColor, show: popShown,
   text: (d, len) => popLabels && (len >= 44 ? d.toLocaleString() : popNice(d)),
 } });
@@ -160,8 +171,7 @@ const PerPersonLayer = opts => new GridCellLayer({ ...opts, spec: {
   t: ppT, color: v => v >= PP_NOBODY ? "#9aa0a6" : rampColor(PP_SCALE, ppT(v)), show: () => true, text: v => v >= PP_NOBODY ? "–" : String(v),
 } });
 
-// road lanes per 1 km square or per administrative area (roads.js): lane-km in total, per km² or per inhabitant (m);
-// the road types are chosen in the Roads list
+// road types of the Roads statistics (roads.js) and its map views (split.js)
 const ROAD_TYPES = [["motorway", "Motorway"], ["trunk", "Trunk"], ["primary", "Primary"], ["secondary", "Secondary"], ["tertiary", "Tertiary"],
   ["unclassified", "Unclassified"], ["residential", "Residential"], ["living_street", "Living street"], ["service", "Service"],
   ["driveway", "Driveway"], ["parking_aisle", "Parking aisle"], ["track", "Track"], ["pedestrian", "Pedestrian"], ["cycleway", "Cycleway"], ["footway", "Footway, path"]];
@@ -178,21 +188,6 @@ const ROAD_HINT = {     // tooltip in the Roads list (OSM highway=*)
 // default: roads for cars only (no service roads, driveways, parking aisles, tracks, foot- and cycleways)
 const ROAD_OFF = ["service", "driveway", "parking_aisle", "track", "pedestrian", "cycleway", "footway"];
 const roadSel = new Set(store.get("roadTypes3", ROAD_TYPES.map(t => t[0]).filter(t => !ROAD_OFF.includes(t))));
-let roadPer = store.get("roadPer", "area");          // total: lane-km · area: lane-km per km² · person: lane-m per inhabitant
-const ROAD_SCALE = ["#fff7ec", "#fdd49e", "#fc8d59", "#d7301f", "#7f0000", "#2b0000"];
-const ROAD_RANGE = { total: [2, 500], area: [2, 500], person: [1, 300] };     // log scale; grid "total": per square
-const ROAD_UNIT = { total: "lane-km", area: "lane-km per km²", person: "lane-m per inhabitant" };
-const ROAD_LEVELS = { 4: ["State", "admin_level 4: Bundesland"], 6: ["County", "admin_level 6: Landkreis, kreisfreie Stadt"],
-  8: ["Town", "admin_level 8: Gemeinde, Stadt"], 9: ["Borough", "admin_level 9: Stadtbezirk"], 10: ["Quarter", "admin_level 10: Stadtteil, Ortsteil"] };
-let roadView = "off";                                 // off · grid · an admin level (roads.js)
-let roadAdminRange = null;                            // admin areas in total: the scale follows the areas shown
-const roadAdmin = L.layerGroup();                     // the areas, drawn by roads.js
-const roadRange = () => roadPer === "total" && roadView !== "grid" && roadAdminRange ? roadAdminRange : ROAD_RANGE[roadPer];
-const roadT = v => { const [lo, hi] = roadRange(); return Math.min(1, Math.max(0, Math.log(v / lo) / Math.log(hi / lo))); };
-const RoadLayer = opts => new GridCellLayer({ ...opts, spec: {
-  url: (z, x, y) => `${API}/roads/grid/${z}/${x}/${y}?${new URLSearchParams({ types: [...roadSel].join(","), per: roadPer, v: dataInfo.population_id })}`,
-  t: roadT, color: v => rampColor(ROAD_SCALE, roadT(v)), show: v => v > 0, text: v => String(Math.round(v)),
-} });
 
 // own pane, so the slope always sits above any base map (incl. vector maps) and below markers
 map.createPane("popdensity").style.zIndex = 240;   // above the base map, below the slope shading
@@ -219,7 +214,6 @@ const layer = L.layerGroup();                   // the search results (markers o
 const MARKERS = "Search results (markers)";
 const POPULATION = "Population density";
 const PER_PERSON = "Built-up per person";
-const ROADS = "Road lanes (1 km)";
 const overlays = {
   [MARKERS]: layer,
   [POPULATION]: PopDensityLayer({
@@ -232,8 +226,6 @@ const overlays = {
     attribution: 'Built-up: <a href="https://ghsl.jrc.ec.europa.eu">GHS-BUILT-S</a> 2020 (EC JRC)' }),
   [PER_PERSON]: PerPersonLayer({ minZoom: 6, maxNativeZoom: 16, maxZoom: 19, opacity: store.get("ppOpacity", 0.7), pane: "popdensity",
     attribution: 'Built-up: <a href="https://ghsl.jrc.ec.europa.eu">GHS-BUILT-S</a> 2020 ÷ population (EC JRC, Zensus 2022 / GHS-POP)' }),
-  [ROADS]: RoadLayer({ minZoom: 7, maxNativeZoom: 16, maxZoom: 19, opacity: store.get("roadOpacity", 0.7), pane: "popdensity",
-    attribution: 'Roads: © OpenStreetMap contributors' }),
   "CORINE land cover (2018)": L.tileLayer.wms("https://image.discomap.eea.europa.eu/arcgis/services/Corine/CLC2018_WM/MapServer/WMSServer", {
     layers: "12,13", version: "1.3.0", format: "image/png", transparent: true, pane: "clc", minZoom: 4, maxNativeZoom: 18, maxZoom: 19,
     opacity: store.get("clcOpacity", CLC_OPACITY),
@@ -300,13 +292,6 @@ legend.innerHTML = `<div id="leg-pop"><b>Inhabitants per km²</b>
     <label class="op">Strength <input type="range" id="pp-op" min="20" max="100" step="5"
       value="${Math.round(store.get("ppOpacity", 0.7) * 100)}" aria-label="Built-up per person strength"></label>
     <div class="note" id="pp-note"></div></div>
-  <div id="leg-roads"><b id="road-title">Road lanes</b>
-    <div class="seg" id="road-per" style="margin:4px 0;width:270px"><button type="button" data-per="total">Total</button><button type="button" data-per="area">per km²</button><button type="button" data-per="person">per person</button></div>
-    <div class="grad" style="width:270px;background: linear-gradient(to right, ${ROAD_SCALE.map((c, i) => `${c} ${Math.round(i / (ROAD_SCALE.length - 1) * 100)}%`).join(", ")})"></div>
-    <div class="ticks" id="road-ticks" style="position:relative;display:block;height:13px;width:270px"></div>
-    <label class="op">Strength <input type="range" id="road-op" min="20" max="100" step="5"
-      value="${Math.round(store.get("roadOpacity", 0.7) * 100)}" aria-label="Road layer strength"></label>
-    <div class="note" id="road-note"></div></div>
   <div id="leg-clc"><b>CORINE land cover</b>
     <div class="clc-list">${CLC_CLASSES.map(([c, n]) => `<div class="row"><i class="sw" style="background:rgb(${c})"></i>${n}</div>`).join("")}</div>
     <label class="op">Strength <input type="range" id="clc-op" min="20" max="100" step="5"
@@ -343,6 +328,7 @@ $("slope-op").addEventListener("input", e => {
   store.set("slopeOpacity", v);
 });
 const BUILT_NAMES = ["Built-up area (GHS)", "Non-residential built-up (GHS)"];
+const legendHooks = [];      // more legend blocks (split.js): each returns whether it is shown
 $("built-op").addEventListener("input", e => {
   for (const n of BUILT_NAMES) overlays[n].setOpacity(e.target.value / 100);
   store.set("builtOpacity", e.target.value / 100);
@@ -351,28 +337,6 @@ $("pp-op").addEventListener("input", e => {
   overlays[PER_PERSON].setOpacity(e.target.value / 100);
   store.set("ppOpacity", e.target.value / 100);
 });
-$("road-op").addEventListener("input", e => {
-  overlays[ROADS].setOpacity(e.target.value / 100);
-  store.set("roadOpacity", e.target.value / 100);
-  if (typeof roadAdminRender === "function") roadAdminRender();
-});
-$("road-per").addEventListener("click", e => {
-  const b = e.target.closest("button"); if (!b) return;
-  roadPer = b.dataset.per; store.set("roadPer", roadPer);
-  overlays[ROADS].redraw();
-  if (typeof roadAdminRender === "function") roadAdminRender();
-  updateLegend(); checkLayerData();
-});
-function renderRoadLegend() {
-  document.querySelectorAll("#road-per button").forEach(b => b.classList.toggle("on", b.dataset.per === roadPer));
-  const [lo, hi] = roadRange(), nice = v => Number(v.toPrecision(v < 10 ? 1 : 2));
-  const ticks = roadRange() === roadAdminRange ? [0, 1, 2, 3, 4].map(i => nice(lo * (hi / lo) ** (i / 4)))
-    : roadPer === "person" ? [1, 3, 10, 30, 100, 300] : [2, 10, 50, 100, 500], last = ticks.at(-1);
-  $("road-ticks").innerHTML = ticks.map(v => `<span style="position:absolute;${v === last ? "right:0" : v === ticks[0] ? "left:0" : `left:${Math.round(roadT(v) * 100)}%;transform:translateX(-50%)`}">${v.toLocaleString()}${v === last && roadRange() !== roadAdminRange ? "+" : ""}</span>`).join("");
-  const admin = ROAD_LEVELS[roadView];
-  $("road-title").textContent = "Road lanes · " + (admin ? admin[0] : "1 km grid");
-  $("road-note").textContent = ROAD_UNIT[roadPer] + (roadPer === "total" && !admin ? " per square" : "") + ` · ${roadSel.size} of ${ROAD_TYPES.length} types (Roads)`;
-}
 $("clc-op").addEventListener("input", e => {
   overlays["CORINE land cover (2018)"].setOpacity(e.target.value / 100);
   store.set("clcOpacity", e.target.value / 100);
@@ -385,20 +349,21 @@ $("pop-op").addEventListener("input", e => {
 const updateLegend = () => {
   const sl = map.hasLayer(slope), pp = map.hasLayer(popLayer), cc = map.hasLayer(overlays["CORINE land cover (2018)"]);
   const bt = BUILT_NAMES.filter(n => map.hasLayer(overlays[n]));
-  const pe = map.hasLayer(overlays[PER_PERSON]), rd = map.hasLayer(overlays[ROADS]) || map.hasLayer(roadAdmin);
+  const pe = map.hasLayer(overlays[PER_PERSON]), rd = legendHooks.map(f => f()).some(Boolean);   // other legends (split.js)
   legend.classList.toggle("show", sl || pp || cc || pe || rd || bt.length > 0);
-  $("leg-roads").hidden = !rd;
-  if (rd) renderRoadLegend();
   $("leg-pp").hidden = !pe;
   $("pp-note").textContent = dataInfo.built_id && dataInfo.population_id ? "1 km squares · grey: nobody" : "no data – see Settings";
   $("leg-slope").hidden = !sl; $("leg-pop").hidden = !pp; $("leg-clc").hidden = !cc; $("leg-built").hidden = !bt.length;
   $("built-title").textContent = bt.length === 1 ? (bt[0].startsWith("Non") ? "Non-residential built-up" : "Built-up") + " share of area" : "Built-up share of area";
   $("built-note").textContent = dataInfo.built_id ? "GHS-BUILT-S 2020 · " + dataInfo.built_cell_m + " m cells" : "no data – see Settings";
   $("pop-filter-wrap").hidden = !pp;
+  const splitGrid = typeof splitGridShown === "function" && splitGridShown();
+  $("grid-wrap").hidden = !(pp || splitGrid);
+  if (pp || splitGrid) fillGridSizes(splitGrid ? splitSubject : "population");
   if (!pp) showPopFilter(false);
   $("legend-note").textContent = map.getZoom() < 8 ? "Zoom in to see slope" : "";
   $("pop-note").textContent = map.getZoom() < POP_MIN_ZOOM ? "Zoom in to see the layer"
-    : (dataInfo.population || "no data – see Settings") + (popSize ? ` · ${popSize >= 1000 ? popSize / 1000 + " km" : popSize + " m"} squares` : "");
+    : (dataInfo.population || "no data – see Settings") + (gridSizeFor("population") ? ` · ${sizeName(gridSizeFor("population"))} squares` : "");
 };
 // filter button in the footer + small card with from / to
 function applyPopRange() {
@@ -411,16 +376,19 @@ function applyPopRange() {
   popSetRange(); renderPopLegend(); popLayer.redraw();
   $("pop-filter-btn").classList.toggle("on", min != null || max != null);
 }
-// grid size: sizes that are a multiple of the data's cell (100 m census: 200 m … 10 km; 1 km grid: 2 km …)
-function fillPopSizes() {
-  const cell = dataInfo.cell_m || 100;
-  const sizes = [0, ...[100, 200, 500, 1000, 2000, 5000, 10000].filter(v => v % cell === 0)];
-  $("pop-size").innerHTML = sizes.map(v => `<option value="${v}">${v ? (v >= 1000 ? v / 1000 + " km" : v + " m") : "Auto"}</option>`).join("");
-  if (!sizes.includes(popSize)) popSize = 0;
-  $("pop-size").value = popSize;
+// the footer choice: the sizes of the grid on the map (split view grid, else the population layer)
+function fillGridSizes(tool) {
+  gridTool = tool;
+  const opts = GRID_OPTIONS[tool](), html = opts.map(v => `<option value="${v}">${sizeName(v)}</option>`).join("");
+  if ($("grid-size").innerHTML !== html) $("grid-size").innerHTML = html;
+  $("grid-size").value = gridSizeFor(tool);
 }
-fillPopSizes();
-$("pop-size").addEventListener("change", e => { popSize = +e.target.value; store.set("popSize", popSize); popLayer.redraw(); updateLegend(); });
+$("grid-size").addEventListener("change", e => {
+  gridSizes[gridTool] = +e.target.value; store.set("gridSizes", gridSizes);
+  popLayer.redraw();
+  if (typeof splitRedraw === "function") splitRedraw();
+  updateLegend();
+});
 $("pop-labels").checked = popLabels;
 $("pop-labels").addEventListener("change", e => { popLabels = e.target.checked; store.set("popLabels", popLabels); popLayer.redraw(); });
 $("pop-min").value = popRange.min ?? ""; $("pop-max").value = popRange.max ?? "";
@@ -433,8 +401,7 @@ $("pop-reset").addEventListener("click", () => { $("pop-min").value = $("pop-max
 document.addEventListener("click", e => { if (!e.target.closest("#pop-filter-wrap")) showPopFilter(false); });
 // a layer that needs a data set which is not installed: say so (instead of an empty map)
 const needsData = { "Built-up area (GHS)": () => dataInfo.built_id, "Non-residential built-up (GHS)": () => dataInfo.built_id, [POPULATION]: () => dataInfo.population_id,
-  [PER_PERSON]: () => dataInfo.built_id && dataInfo.population_id,
-  [ROADS]: () => dataInfo.roads && (roadPer === "area" || dataInfo.population_id) };
+  [PER_PERSON]: () => dataInfo.built_id && dataInfo.population_id };
 function checkLayerData() {
   const missing = Object.keys(needsData).filter(n => map.hasLayer(overlays[n]) && !needsData[n]());
   $("notice").hidden = !missing.length;

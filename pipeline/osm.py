@@ -15,7 +15,7 @@ import psycopg
 
 from backend import catalog
 from backend.common import DB_OSM, dsn, update_state
-from . import roads
+from . import amenities, roads
 from .util import download, have, log, progress, recreate_db, stage
 
 INDEXES = """
@@ -110,8 +110,10 @@ def build(regions: list[str], fresh: bool = False):
         c.execute(INDEXES)
         box = c.execute("""SELECT ST_XMin(b), ST_YMin(b), ST_XMax(b), ST_YMax(b) FROM
                            (SELECT ST_Extent(ST_Transform(way, 4326)) AS b FROM planet_osm_point) s""").fetchone()
-    stage(82, 95)
-    roads.main(new)                      # road lanes per 1 km square (map layer "Roads")
+    stage(82, 92)
+    roads.main(new)                      # road lanes per square and area (Roads)
+    stage(92, 95)
+    amenities.main(new)                  # shops, services, leisure (Amenities)
     stage(0, 100)
     progress(95, "switching")
     with psycopg.connect(dsn("postgres"), autocommit=True) as c:

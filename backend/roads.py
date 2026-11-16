@@ -10,6 +10,7 @@ Two ways to look at it:
                       from table road_cells (pipeline/roads.py, made once per map import).
 """
 import json
+import math
 from functools import lru_cache
 
 import psycopg
@@ -33,6 +34,9 @@ OFF_BY_DEFAULT = ("service", "driveway", "parking_aisle", "track", "pedestrian",
 CELL = 1000                     # m: the squares of the map layer
 SRIDS = (3035, 54009)           # coordinate systems of the population grids (catalog.POPULATION)
 ADMIN_LEVELS = (4, 6, 8, 9, 10)  # administrative areas: state, county, town, borough, quarter (Germany; other countries differ)
+# Each map view covers the land without gaps: the areas of its own level first, then – where those are missing –
+# the next levels in this order (e.g. towns without boroughs show their quarters, else the whole town).
+VIEWS = {4: (4,), 6: (6, 4), 8: (8, 6, 4), 9: (9, 10, 8, 6, 4), 10: (10, 9, 8, 6, 4)}
 
 # SQL: type number (index in TYPES) and lanes of a line l of planet_osm_line
 TYPE_SQL = "CASE " + " ".join(
@@ -91,7 +95,7 @@ def stats(req: Area):
 # ---------- map layer: 1 km squares ----------
 def has_cells() -> bool:
     with db() as conn:
-        return bool(conn.execute("SELECT 1 FROM pg_tables WHERE tablename = 'road_admin_area'").fetchone())   # the last table made
+        return bool(conn.execute("SELECT 1 FROM pg_tables WHERE tablename = 'road_view_lanes'").fetchone())   # the last table made
 
 
 CELLS_QUERY = """
@@ -121,23 +125,19 @@ def grid_srid() -> tuple[int, str | None]:
         return SRIDS[0], None
 
 
-@lru_cache(maxsize=1024)
-def grid_json(z: int, x: int, y: int, types: tuple, per: str, srid: int, table: str | None) -> bytes:
-    """[x, y, value] per square: lane-km (per=total), lane-km per km² (per=area) or lane-metres per inhabitant (per=person)."""
-    box, res, size = population.tile_frame(z, x, y, CELL, 0)
-    p = dict(box, size=size, cell=CELL, srid=srid, types=list(types))
-    with db() as conn:
-        roads = {(a, b): v for a, b, v in conn.execute(CELLS_QUERY, p).fetchall()}
+def grid_finish(totals: dict, box: dict, res: float, size: int, per: str, srid: int, table: str | None, per_people: int = 1000) -> bytes:
+    """Tile JSON from {(square x, square y): total}: the total (per=total), per km² (area) or per `per_people`
+    inhabitants (person; squares without inhabitants are left out). Shared by the road and the transit grids."""
     if per == "person":
         if not table:
             raise HTTPException(409, "No population data – Settings → Population")
         with population.connect() as conn:
-            people = {(a, b): v for a, b, v in conn.execute(POP_QUERY.format(table=table), p).fetchall()}
-        vals = {k: v * 1000 / people[k] for k, v in roads.items() if people.get(k, 0) >= 1}
+            people = {(a, b): v for a, b, v in conn.execute(POP_QUERY.format(table=table), dict(box, size=size, srid=srid)).fetchall()}
+        vals = {k: v * per_people / people[k] for k, v in totals.items() if people.get(k, 0) >= 1}
     elif per == "area":
-        vals = {k: v / (size / 1000) ** 2 for k, v in roads.items()}
+        vals = {k: v / (size / 1000) ** 2 for k, v in totals.items()}
     else:
-        vals = roads
+        vals = totals
     keys = list(vals)
     with population.connect() as conn:     # any database with PostGIS: projects the square centres
         pts = conn.execute(CENTRES_QUERY, dict(size=size, srid=srid, xs=[k[0] for k in keys], ys=[k[1] for k in keys])).fetchall() if keys else []
@@ -145,32 +145,60 @@ def grid_json(z: int, x: int, y: int, types: tuple, per: str, srid: int, table: 
         return population.tile_json(conn, rows, srid, box, res, size, lambda v: round(v, 1 if v < 100 else 0))
 
 
+@lru_cache(maxsize=1024)
+def grid_json(z: int, x: int, y: int, types: tuple, per: str, srid: int, table: str | None, want: int = 0) -> bytes:
+    """[x, y, value] per square: lane-km (per=total), lane-km per km² (per=area) or lane-metres per inhabitant (per=person)."""
+    box, res, size = population.tile_frame(z, x, y, CELL, want)
+    with db() as conn:
+        totals = {(a, b): v for a, b, v in conn.execute(CELLS_QUERY, dict(box, size=size, cell=CELL, srid=srid, types=list(types))).fetchall()}
+    return grid_finish(totals, box, res, size, per, srid, table)
+
+
 @router.get("/grid/{z}/{x}/{y}")
-def grid_tile(z: int, x: int, y: int, types: str = "", per: str = "area"):
+def grid_tile(z: int, x: int, y: int, types: str = "", per: str = "area", size: int = 0):
     if not 0 <= z <= 22 or not (0 <= x < 2 ** z and 0 <= y < 2 ** z):
         raise HTTPException(404, "No such tile")
     if per not in PER:
         raise HTTPException(400, "per must be total, area or person")
     if not has_cells():
-        raise HTTPException(409, "Roads not prepared – Settings → Map → Prepare roads")
+        raise HTTPException(409, "Roads not prepared – Settings → Map → Prepare analyses")
     ids = tuple(sorted(TYPE_IDS.index(t) for t in set(types.split(",")) if t in TYPE_IDS))
     srid, table = grid_srid()
-    return population.tile_response(grid_json(z, x, y, ids, per, srid, table if per == "person" else None))
+    return population.tile_response(grid_json(z, x, y, ids, per, srid, table if per == "person" else None, min(size, 100000)))
 
 
 PER = ("total", "area", "person")
 
 
+@router.get("/square")
+def square(lon: float, lat: float, z: int, base: int = 1000, size: int = 0):
+    """Outline of the grid square at a point, as the grid is drawn at zoom z (base: smallest square, size: the chosen one)
+    – for clicking a square of the Split view. Grid squares are in the population grid's coordinate system."""
+    if not (-180 <= lon <= 180 and -85 <= lat <= 85 and 0 <= z <= 22 and base > 0):
+        raise HTTPException(400, "bad point")
+    n = 2 ** z                       # the tile of the point: the same squares as its tile
+    tx, ty = int((lon + 180) / 360 * n), int((1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n)
+    _, _, sq = population.tile_frame(z, min(tx, n - 1), min(ty, n - 1), base, min(size, 100000))
+    srid, _ = grid_srid()
+    with db() as conn:
+        geom = conn.execute(f"""
+            WITH p AS (SELECT ST_Transform(ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326), {srid}) AS g),
+                 c AS (SELECT floor(ST_X(g) / %(s)s) * %(s)s AS x, floor(ST_Y(g) / %(s)s) * %(s)s AS y FROM p)
+            SELECT ST_AsGeoJSON(ST_Transform(ST_Segmentize(ST_MakeEnvelope(x, y, x + %(s)s, y + %(s)s, {srid}), %(s)s / 8.0), 4326), 6)::jsonb
+            FROM c""", dict(lon=lon, lat=lat, s=sq)).fetchone()[0]
+    return {"geometry": geom, "size_m": sq}
+
+
 # ---------- map view: administrative areas ----------
 ADMIN_QUERY = """
-SELECT a.osm_id, a.name, a.km2,
+SELECT a.id, a.name, a.level, a.km2,
        ST_AsGeoJSON(ST_Transform(ST_SimplifyPreserveTopology(a.way, %(tol)s), 4326), 5)::jsonb,
        ST_AsGeoJSON(ST_Transform(ST_PointOnSurface(a.way), 4326), 5)::jsonb,
        (SELECT array_agg(coalesce(r.lane_km, 0) ORDER BY i) FROM generate_series(0, %(n)s - 1) i
-          LEFT JOIN road_admin r ON r.osm_id = a.osm_id AND r.t = i)
-FROM road_admin_area a
-WHERE a.level = %(level)s AND a.way && ST_MakeEnvelope(%(minx)s, %(miny)s, %(maxx)s, %(maxy)s, 3857)
-ORDER BY a.km2 DESC LIMIT 800
+          LEFT JOIN road_view_lanes r ON r.id = a.id AND r.t = i)
+FROM road_view a
+WHERE a.view = %(level)s AND a.way && ST_MakeEnvelope(%(minx)s, %(miny)s, %(maxx)s, %(maxy)s, 3857)
+ORDER BY a.km2 DESC LIMIT 4000
 """
 ADMIN_POP = """
 WITH p AS MATERIALIZED (       -- MATERIALIZED: else each outline is built again for every cell
@@ -178,7 +206,7 @@ WITH p AS MATERIALIZED (       -- MATERIALIZED: else each outline is built again
   FROM jsonb_array_elements(%s::jsonb) e)
 SELECT p.id, (SELECT sum(c.pop) FROM {table} c WHERE ST_Intersects(p.g, c.geom)) FROM p      -- geom: the cell centre
 """
-_admin_pop: dict = {}       # (population dataset, osm id) -> inhabitants (cell centres inside the area)
+_admin_pop: dict = {}       # (population dataset, road_view id) -> inhabitants (cell centres inside the area)
 
 
 def admin_population(ids: list[int]) -> dict:
@@ -189,8 +217,8 @@ def admin_population(ids: list[int]) -> dict:
     todo = [i for i in ids if (g.ds, i) not in _admin_pop]
     if todo:
         with db() as conn:            # the outlines, a little simplified (10 m), for counting
-            rows = conn.execute("SELECT osm_id, ST_AsGeoJSON(ST_Transform(ST_SimplifyPreserveTopology(way, 10), 4326), 6) "
-                                "FROM road_admin_area WHERE osm_id = ANY(%s)", (todo,)).fetchall()
+            rows = conn.execute("SELECT id, ST_AsGeoJSON(ST_Transform(ST_SimplifyPreserveTopology(way, 10), 4326), 6) "
+                                "FROM road_view WHERE id = ANY(%s)", (todo,)).fetchall()
         with population.connect() as conn:
             got = dict(conn.execute(ADMIN_POP.format(srid=g.srid, table=g.table),
                                     (json.dumps([{"id": i, "g": geom} for i, geom in rows]),)).fetchall())
@@ -201,19 +229,20 @@ def admin_population(ids: list[int]) -> dict:
 
 @router.get("/admin")
 def admin(level: int, minx: float, miny: float, maxx: float, maxy: float, zoom: int = 10):
-    """Administrative areas of a level in the map view (EPSG:3857 box): outline, label point, area,
-    lane-km per road type (index as in TYPES) and inhabitants. The client adds up the chosen types."""
+    """The areas of a view (VIEWS: its level, gaps filled by other levels) in the map view (EPSG:3857 box): outline,
+    label point, area, level it comes from, lane-km per road type (index as in TYPES) and inhabitants.
+    The client adds up the chosen types."""
     if level not in ADMIN_LEVELS:
         raise HTTPException(400, f"level must be one of {ADMIN_LEVELS}")
     if not has_cells():
-        raise HTTPException(409, "Roads not prepared – Settings → Map → Prepare roads")
+        raise HTTPException(409, "Roads not prepared – Settings → Map → Prepare analyses")
     tol = 156543.03 / 2 ** zoom          # about one pixel
     with db() as conn:
         rows = conn.execute(ADMIN_QUERY, dict(level=level, minx=minx, miny=miny, maxx=maxx, maxy=maxy, tol=tol, n=len(TYPE_IDS))).fetchall()
     people = admin_population([r[0] for r in rows])
     return {"types": TYPE_IDS, "areas": [
-        {"id": i, "name": name, "km2": round(km2, 2), "geometry": geom, "label": pt["coordinates"], "lane_km": [round(v, 2) for v in lanes],
-         "population": people.get(i)} for i, name, km2, geom, pt, lanes in rows]}
+        {"id": i, "name": name, "level": lv, "km2": round(km2, 2), "geometry": geom, "label": pt["coordinates"],
+         "lane_km": [round(v, 2) for v in lanes], "population": people.get(i)} for i, name, lv, km2, geom, pt, lanes in rows]}
 
 
 @router.get("/info")

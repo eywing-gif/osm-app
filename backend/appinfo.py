@@ -24,17 +24,15 @@ def parse(v: str) -> tuple:
 
 
 def checks() -> list[dict]:
-    """What the machine needs: [{name, ok, hint}]."""
-    fix = "run in the app folder:  sh install.sh"
-    out = [{"name": c, "ok": bool(shutil.which(c)), "hint": fix} for c in ("psql", "osm2pgsql", "git")]
+    """What the machine needs: [{name, ok}]. Anything missing: the Repair button (Settings → App) fixes it."""
+    out = [{"name": n, "ok": bool(shutil.which(c))} for n, c in (("Database tools", "psql"), ("Map import (osm2pgsql)", "osm2pgsql"), ("git", "git"))]
     try:
-        with psycopg.connect("dbname=postgres") as c:
+        with psycopg.connect("dbname=postgres", connect_timeout=3) as c:
             role = c.execute("SELECT rolcreatedb OR rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0]
             gis = c.execute("SELECT count(*) FROM pg_available_extensions WHERE name = 'postgis'").fetchone()[0]
-        out += [{"name": "database access", "ok": bool(role), "hint": fix},
-                {"name": "postgis", "ok": bool(gis), "hint": fix}]
+        out += [{"name": "Database", "ok": bool(role)}, {"name": "PostGIS", "ok": bool(gis)}]
     except psycopg.Error:
-        out.append({"name": "database access", "ok": False, "hint": fix})
+        out.append({"name": "Database", "ok": False})
     return out
 
 
@@ -70,6 +68,13 @@ def update(req: Update):
     if not parse(req.tag):
         raise HTTPException(400, "Bad version.")
     return datasets.start("App " + req.tag, "pipeline.update", req.tag)
+
+
+@router.post("/repair")
+def repair():
+    """Install / start what is missing (asks for the administrator password in a window: pipeline/repair.py)."""
+    from . import datasets
+    return datasets.start("Repair", "pipeline.repair")
 
 
 @router.post("/restart")

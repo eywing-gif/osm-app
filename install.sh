@@ -22,61 +22,25 @@ ask() {        # ask "question" -> 0 for yes (default)
   read -r answer </dev/tty 2>/dev/null || answer=y
   case $answer in [nN]*) return 1 ;; *) return 0 ;; esac
 }
-as_postgres() { (cd / && sudo -u postgres "$@"); }
 
 [ "$(id -u)" = 0 ] && fail "Please run it as your normal user, without sudo:   sh install.sh"
 [ "$(uname)" = Linux ] || fail "This app runs on Linux only."
 
-# ---------- 1. system packages ----------
-bold "1/5 System packages"
-if need pacman; then
-  DISTRO=arch; PKGS="python python-gobject webkit2gtk-4.1 postgresql postgis osm2pgsql git"
-  INSTALL="sudo pacman -S --needed --noconfirm $PKGS"
-elif need apt-get; then
-  DISTRO=debian; PKGS="python3 python3-venv python3-gi gir1.2-webkit2-4.1 postgresql postgresql-contrib postgis osm2pgsql git"
-  INSTALL="sudo apt-get update && sudo apt-get install -y $PKGS"
-elif need dnf; then
-  DISTRO=fedora; PKGS="python3 python3-gobject webkit2gtk4.1 postgresql-server postgresql-contrib postgis osm2pgsql git"
-  INSTALL="sudo dnf install -y $PKGS"
-elif need zypper; then
-  DISTRO=suse; PKGS="python3 python3-gobject python3-gobject-Gdk typelib-1_0-WebKit2-4_1 postgresql-server postgresql-contrib postgis osm2pgsql git"
-  INSTALL="sudo zypper install -y $PKGS"
-else
-  fail "Unknown Linux distribution. Install by hand: Python 3 (with venv), PyGObject, WebKitGTK 4.1, PostgreSQL, PostGIS, osm2pgsql, git – then run this again."
-fi
+# ---------- 1. + 2. system packages, database server, database user (needs your password: setup-system.sh) ----------
+bold "1/5 System packages, 2/5 database server"
 missing=""
 for c in python3 psql osm2pgsql git; do need "$c" || missing="$missing $c"; done
 python3 -c 'import venv, ensurepip' 2>/dev/null || missing="$missing python-venv"
 python3 -c 'import gi; gi.require_version("WebKit2", "4.1")' 2>/dev/null || missing="$missing webkitgtk"
+psql -d postgres -Atqc "select 1" >/dev/null 2>&1 || missing="$missing database"
 if [ -n "$missing" ]; then
   echo "    Missing:$missing"
-  echo "    Will run:  $INSTALL"
-  ask "Install them now? (asks for your password)" || fail "Cancelled. Install the packages above, then run this again."
-  sh -c "$INSTALL" || fail "Installing the packages failed (see above)."
+  ask "Set it up now? (asks for your password)" || fail "Cancelled. Run this again when you are ready."
+  sudo sh "$APP_DIR/setup-system.sh" "$USER" || fail "The system setup failed (see above)."
 fi
 ok "packages"
-
-# ---------- 2. database server ----------
-bold "2/5 Database server (PostgreSQL)"
-if ! psql -d postgres -Atqc "select 1" >/dev/null 2>&1; then
-  case $DISTRO in        # a new server needs its data folder once (Debian / Ubuntu do this themselves)
-    arch) sudo test -f /var/lib/postgres/data/PG_VERSION ||
-            as_postgres initdb --locale=C.UTF-8 --encoding=UTF8 -D /var/lib/postgres/data ;;
-    fedora) sudo test -f /var/lib/pgsql/data/PG_VERSION || sudo postgresql-setup --initdb ;;
-  esac
-  if need systemctl; then
-    systemctl is-active --quiet postgresql 2>/dev/null || sudo systemctl enable --now postgresql
-  fi
-  i=0
-  until as_postgres psql -Atqc "select 1" >/dev/null 2>&1; do
-    i=$((i + 1)); [ $i -gt 30 ] && fail "The database server does not start. Try:  sudo systemctl status postgresql"
-    sleep 1
-  done
-  # a database user with your login name, allowed to create databases
-  psql -d postgres -Atqc "select 1" >/dev/null 2>&1 || as_postgres createuser --superuser "$USER" || fail "Could not create the database user $USER."
-fi
 psql -d postgres -Atqc "select 1" >/dev/null 2>&1 || fail "No access to the database as $USER (check pg_hba.conf: local connections should use 'peer' or 'trust')."
-ok "running, user $USER"
+ok "database server, user $USER"
 [ "$(psql -d postgres -Atqc "select count(*) from pg_available_extensions where name = 'postgis'")" -gt 0 ] ||
   fail "PostGIS is missing for this PostgreSQL version. Install the PostGIS package that matches 'psql --version'."
 ok "PostGIS"

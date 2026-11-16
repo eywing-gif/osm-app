@@ -72,7 +72,7 @@
     const missing = miss.length, missSize = miss.reduce((a, r) => a + (r.est || 0), 0);
     $("set-body").innerHTML = `<div class="empty" style="padding:0 0 6px">Map data for search, point info, roads. Download adds a region to the map; or tick several, then Apply.</div><input class="search" placeholder="Search region" value="${esc(filter)}" data-a="filter">${osmRows()}`;
     $("set-apply").innerHTML = `<span>${data.osm.built.length ? "Active: " + data.osm.built.map(i => esc(data.osm.regions.find(r => r.id === i)?.name ?? i)).join(", ") : "No map data"}</span>
-      ${data.osm.built.length && !data.osm.roads ? `<button class="btn" data-a="roads" title="Needed for the Road lanes layer" ${busy() ? "disabled" : ""}>Prepare roads</button>` : ""}
+      ${data.osm.built.length && !data.osm.roads ? `<button class="btn" data-a="roads" title="Needed for Roads and Amenities" ${busy() ? "disabled" : ""}>Prepare analyses</button>` : ""}
       ${data.osm.built.length ? `<button class="btn" data-a="osmupd" title="Newest map data for the regions in use" ${busy() ? "disabled" : ""}>Update</button>` : ""}
       <button class="btn primary" data-a="apply" ${same || !sel.size || busy() ? "disabled" : ""}>Apply${missing ? ` · ${missing} to download${missSize ? " (" + mb(missSize) + ")" : ""}` : ""}</button>`;
   }
@@ -102,7 +102,11 @@
   function renderApp() {
     if (!app) { loadApp(); return; }
     const j = data.job, updated = j?.title.startsWith("App ") && j.state === "done";
-    $("set-body").innerHTML = `<div class="row"><span class="name">Version<small>${esc(app.mode === "git" ? "git checkout" : "zip install")} · ${esc(app.repo)}</small></span>
+    const broken = app.checks.some(c => !c.ok);
+    $("set-body").innerHTML = (broken ? `<div class="repair"><b>Something is missing</b>
+        <span>Repair installs and starts it. It asks for your password.</span>
+        <button class="btn primary" data-a="repair" ${busy() ? "disabled" : ""}>Repair</button></div>` : "")
+      + `<div class="row"><span class="name">Version<small>${esc(app.mode === "git" ? "git checkout" : "zip install")} · ${esc(app.repo)}</small></span>
         <b>${esc(app.version)}</b>
         ${updated ? '<button class="btn primary" data-a="restart">Restart</button>'
           : latest?.newer ? `<button class="btn primary" data-a="update" data-id="${esc(latest.latest)}" ${busy() ? "disabled" : ""}>Update to ${esc(latest.latest)}</button>`
@@ -110,7 +114,7 @@
       </div>
       ${latest ? `<div class="row"><span class="name">${esc(latest.error || (latest.newer ? "New version " + latest.latest : "Up to date"))}</span></div>` : ""}
       ${app.checks.map(c => `<div class="row"><span class="tag" style="${c.ok ? "" : "background:#fee2e2;color:#b91c1c"}">${c.ok ? "ok" : "missing"}</span>
-        <span class="name">${esc(c.name)}${c.ok ? "" : `<small>${esc(c.hint)}</small>`}</span></div>`).join("")}`;
+        <span class="name">${esc(c.name)}</span></div>`).join("")}`;
     $("set-apply").innerHTML = "";
   }
 
@@ -136,6 +140,7 @@
     if (a === "toggle") { open.has(id) ? open.delete(id) : open.add(id); return render(); }
     if (a === "use") { el.checked ? sel.add(id) : sel.delete(id); return render(); }
     if (a === "check") return check();
+    if (a === "repair") { await call("POST", "/../app/repair"); load(false); return watchJob(); }
     if (a === "update") { await call("POST", "/../app/update", { tag: id }); return load(false); }
     if (a === "restart") {
       await fetch(API + "/app/restart", { method: "POST" });
@@ -169,6 +174,7 @@
         if (jobWasRunning && j) {
           jobWasRunning = false;
           toast(j.state === "done" ? `✓ ${j.title} – ready` : `${j.title} – ${j.state}${j.state === "failed" ? ": " + j.text : ""}`, j.state !== "done");
+          if (j.title === "Repair") app = null;      // check again
           window.dataChanged?.();
           if (isOpen()) load(false);
         }
@@ -205,6 +211,10 @@
     document.addEventListener("keydown", e => { if (e.key === "Escape" && s.classList.contains("open")) close(); });
     $("settings-btn").addEventListener("click", () => { s.classList.add("open"); load(true); });
     watchJob();          // a job may still be running from before (e.g. the window was reloaded)
+    // something missing on this computer (database not running, …): open Settings → App with the Repair button
+    fetch(API + "/app").then(r => r.json()).then(info => {
+      if (info.checks.some(c => !c.ok)) { app = info; tab = "app"; s.classList.add("open"); load(true); }
+    }).catch(() => {});
   });
   function close() { $("settings").classList.remove("open"); }
 })();

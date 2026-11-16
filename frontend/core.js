@@ -18,9 +18,9 @@ async function loadDataInfo(first) {
   if (first && !store.get("view", null) && dataInfo.bbox) map.fitBounds([[dataInfo.bbox[1], dataInfo.bbox[0]], [dataInfo.bbox[3], dataInfo.bbox[2]]]);
   if (first && !names.length && !dataInfo.population_id) $("settings-btn").click();     // nothing installed yet
   updateLegend(); checkLayerData();
-  fillPopSizes();
   overlays[POPULATION].redraw();      // grid or timetables may have changed: draw the layers again
-  for (const n of ["Built-up area (GHS)", "Non-residential built-up (GHS)", PER_PERSON, ROADS]) overlays[n].redraw();
+  for (const n of ["Built-up area (GHS)", "Non-residential built-up (GHS)", PER_PERSON]) overlays[n].redraw();
+  if (typeof splitRedraw === "function") splitRedraw();
   if (!first && typeof trRefresh === "function") trRefresh();
 }
 window.dataChanged = () => loadDataInfo(false);

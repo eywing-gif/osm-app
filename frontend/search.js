@@ -18,8 +18,8 @@ document.querySelectorAll("#source button").forEach(b => b.addEventListener("cli
   if ($("q").value.trim()) search();
 }));
 
-const setStatus = (text, error = false) => {
-  $("status").textContent = text;
+const setStatus = (text, error = false, html = false) => {   // html: text is trusted markup (a link)
+  $("status")[html ? "innerHTML" : "textContent"] = text;
   $("status").className = error ? "error" : "";
 };
 
@@ -90,8 +90,10 @@ async function search() {
   closeSuggest();
   closeLibrary();
   controller?.abort();
-  if (isPopulationQuery(q)) return populationSearch();
-  if (isRoadsQuery(q)) return roadsSearch();
+  if (isPopulationQuery(q)) { setSplitSubject("population"); return populationSearch(); }
+  if (isRoadsQuery(q)) { setSplitSubject("roads"); return roadsSearch(); }
+  if (isAmenityQuery(q)) { setSplitSubject("amenities"); return amenitySearch(); }
+  if (typeof amenSetPoint === "function") { amenSetPoint(null, false); amenDots.clearLayers(); }   // another search: no amenity marks
   if (source === "online" && !area && map.getZoom() < ONLINE_MIN_ZOOM) {
     clearResults();
     setStatus("Zoom in further (or pick an area) to search online.");
@@ -125,19 +127,21 @@ const isPopulationQuery = q => /^(population|bev[oö]lkerung|einwohner|census|ze
 // the area the statistics are about: the chosen / drawn area, otherwise what is visible on the map
 function populationGeometry() {
   if (area) return area.geometry;
+  if (typeof splitFocus !== "undefined" && splitFocus) return splitFocus.geometry;     // a clicked square / area (split.js)
   const b = map.getBounds(), clamp = (v, m) => Math.max(-m, Math.min(m, v));
   const w = clamp(b.getWest(), 180), e = clamp(b.getEast(), 180), s = clamp(b.getSouth(), 85), n = clamp(b.getNorth(), 85);
   return { type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] };
 }
 
 const dash = "–";
+const areaName = () => area ? area.name : typeof splitFocus !== "undefined" && splitFocus ? splitFocus.name : "the visible map area";
 const num = (v, d = 0, unit = "") => v == null ? dash : fmt(v, d) + unit;
 
 function showPopulation(d) {
   layer.clearLayers(); found = []; updateMarkerHint();
   $("res-count").textContent = d.cells ? d.population.toLocaleString() : dash;
   $("res-label").textContent = "inhabitants";
-  const where = area ? area.name : "the visible map area";
+  const where = areaName();
   if (!d.cells) {
     setStatus(`No population data in ${where}.`);
     $("res-list").innerHTML = "";
@@ -247,6 +251,7 @@ async function loadOsmArea(osmType, osmId, fit = true) {
 // -- show / remove the area
 function setArea(info, shapeLayer = null, fit = true) {
   clearArea(false);
+  if (splitView !== "off") setSplitView("off");      // an area or a split view, not both
   area = info;
   if (shapeLayer) {
     drawnLayer = shapeLayer;
@@ -263,6 +268,7 @@ function setArea(info, shapeLayer = null, fit = true) {
   if (fit) zoomToArea();
   saveArea();
   if ($("q").value.trim()) search();
+  document.dispatchEvent(new Event("areachange"));     // other tools that use the area (Transit → Supply)
 }
 
 function clearArea(research = true) {
@@ -277,8 +283,10 @@ function clearArea(research = true) {
   $("area-info").hidden = true;
   store.set("area", null);
   if (research && had && $("q").value.trim()) search();
+  if (had) document.dispatchEvent(new Event("areachange"));
 }
-$("area-clear").addEventListener("click", () => clearArea());
+// × goes back step by step: clicked square / area → split view → named area
+$("area-clear").addEventListener("click", () => splitFocus ? setSplitFocus(null) : splitView !== "off" ? setSplitView("off") : clearArea());
 
 // dim everything outside the area
 let mask = null;

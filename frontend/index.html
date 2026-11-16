@@ -72,7 +72,9 @@
             <button type="button" data-view="lines" role="radio">Lines</button>
             <button type="button" data-view="stations" role="radio">Stations</button>
             <button type="button" data-view="reach" role="radio">Reach</button>
+            <button type="button" data-view="supply" role="radio">Supply</button>
           </div>
+          <div id="trn-supply-opts" hidden></div>
           <div id="trn-reach-opts">
             <div id="rch-access" class="seg" role="radiogroup" aria-label="To and from the stops">
               <button type="button" data-access="walk" role="radio">Walk</button>
@@ -157,6 +159,7 @@
             <button type="button" data-shape="Rectangle">▭ Rectangle</button>
             <button type="button" data-shape="Circle">◯ Circle</button>
           </div>
+          <div class="draw-row" id="split-row" title="Roads and Population: the numbers per square or area on the map"></div>
         </div>
         <div id="area-info" hidden></div>
       </div>
@@ -196,6 +199,7 @@
       <nav id="toolbar" aria-label="Tools">
         <button type="button" id="pop-btn" title="Inhabitants of an area">Population</button>
         <button type="button" id="road-btn" title="Lane-km of an area">Roads</button>
+        <button type="button" id="amen-btn" title="Shops, services, leisure: what a place offers">Amenities</button>
         <button type="button" id="trn-btn" title="Public transport" aria-expanded="false">Transit</button>
         <button type="button" id="lu-btn" title="Land use: OSM tags" aria-expanded="false">Landuse</button>
         <button type="button" id="insp-btn" title="Click the map: everything at that point" aria-expanded="false">Point info</button>
@@ -205,13 +209,13 @@
       <div id="legend"></div>
       <div id="bar">
         <span id="zoom-info"></span>
+        <label id="grid-wrap" hidden title="Size of the grid squares on the map">Grid <select id="grid-size"></select></label>
         <span id="pop-filter-wrap" hidden>
           <button type="button" id="pop-filter-btn" title="Choose which densities are shown">Density Filter</button>
           <div id="pop-filter" hidden>
             <b>Density Filter</b>
             <label>From <input type="number" id="pop-min" min="0" step="100" placeholder="0"></label>
             <label>To <input type="number" id="pop-max" min="0" step="100" placeholder="∞"></label>
-            <label>Squares <select id="pop-size"></select></label>
             <label><span>Show values</span> <input type="checkbox" id="pop-labels"></label>
             <button type="button" id="pop-reset">Reset</button>
           </div>
@@ -230,6 +234,8 @@
   <script src="/static/inspect.js"></script>
   <script src="/static/landuse.js"></script>
   <script src="/static/roads.js"></script>
+  <script src="/static/split.js"></script>
+  <script src="/static/amenities.js"></script>
   <script src="/static/transit.js"></script>
 </body>
 </html>

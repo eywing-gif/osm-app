@@ -148,6 +148,7 @@ const TR_INFO_HELP = {
   lines: '<div class="empty">Click a line to see which services use that section and how often they run.</div>',
   stations: '<div class="empty">Click a station to see which types of line stop there and how often.</div>',
   reach: '<div class="empty">Click the map: how far you get in the chosen time.</div>',
+  supply: '<div class="empty">Departures in the area above.</div>',
 };
 function trRenderControls() {
   document.querySelectorAll("#trn-day button").forEach(b => b.classList.toggle("on", b.dataset.day === tr.day));
@@ -160,6 +161,7 @@ function trRenderControls() {
   trRenderFilters();
   $("trn-stations-opts").hidden = tr.view !== "stations";
   $("trn-reach-opts").hidden = tr.view !== "reach";
+  trSupplyPlace();
   document.querySelectorAll("#rch-access button").forEach(b => b.classList.toggle("on", b.dataset.access === tr.access));
   $("rch-min").value = tr.minutes; $("rch-val").textContent = tr.minutes;
   $("trn-modes").innerHTML = TR_MODES.map(([id, name, hint, c]) => `
@@ -172,12 +174,19 @@ function trRenderControls() {
   const zmin = Math.min(...[...tr.modes].map(m => TR_MIN_ZOOM[m]));
   $("tr-note").innerHTML = (tr.modes.size && map.getZoom() < zmin ? `<b>Zoom in to see the selected lines (from zoom ${zmin}).</b><br>` : "")
     + `Interval = average time between departures from 07:00 to 19:00 in the busier direction, all lines of that type together${day ? ` (timetable of ${day})` : ""}.
+       ${tr.view === "supply" ? "Supply: departures 07–19 h at the stations in the area (all chosen types); per km² and per 1,000 inhabitants. Map: Search in → split by." : ""}
        ${tr.view === "reach" ? `Reach: to / from the stops ${tr.access === "bike" ? `bike ${BIKE_KMH} km/h` : `walk ${WALK_KMH} km/h`} × ${DETOUR} detour; changes on foot (≤ 200 m); wait = ½ interval; average day, not the exact timetable.` : ""}
        ${tr.view === "stations" ? "Dot area = departures from the station (all types together); the colours show how they split between the types of line (names from zoom 14)." : tr.width === "freq" ? "Line width = frequency (from zoom 14 exactly proportional: every 5 min is twice as wide as every 10 min)." : "All lines have the same width."}
        Lines follow the real tracks and roads where OpenStreetMap has the route, else straight between stops.
        Timetables: ${esc(dataInfo.transit_name || "–")}.`;
 }
-const trRefresh = () => { trSave(); trRenderControls(); trUpdateCount(); if (tr.on) { transitLayer.redraw(); if (tr.lastClick) trLookup(tr.lastClick); } };
+const trRefresh = () => {
+  trSave(); trRenderControls(); trUpdateCount();
+  if (!tr.on) return;
+  transitLayer.redraw();
+  if (tr.view === "supply") { trSupply(); if (splitSubject === "transit") splitRedraw(true); }
+  else if (tr.lastClick) trLookup(tr.lastClick);
+};
 
 function setTransit(on) {
   if (on === tr.on) return;
@@ -190,13 +199,13 @@ function setTransit(on) {
       tr.meta = await r.json(); trRenderControls();
     }).catch(e => { $("tr-info").innerHTML = `<div class="empty" style="color:#b91c1c">${esc(e.message)}</div>`; });
   } else {
-    map.removeLayer(transitLayer); inspectMark.clearLayers(); reachMark.clearLayers(); tr.seq++; tr.lastClick = null; tr.counts = null; tr.on = false; trShowCentres();
+    map.removeLayer(transitLayer); inspectMark.clearLayers(); reachMark.clearLayers(); trSupplyPlace(false); tr.seq++; tr.lastClick = null; tr.counts = null; tr.on = false; trShowCentres();
   }
   tr.on = on;
   $("sidebar").classList.toggle("trn-open", on);
   $("trn-btn").classList.toggle("trn-on", on);
   $("trn-btn").setAttribute("aria-expanded", String(on));
-  if (on) trRenderControls();
+  if (on) { trRenderControls(); trSupply(); }
 }
 $("trn-btn").addEventListener("click", () => setTransit(!tr.on));
 $("pop-btn").addEventListener("click", () => {       // Population tool = the population search in the sidebar
@@ -370,6 +379,7 @@ async function trLookup(latlng) {
   $("tr-info").innerHTML = '<div class="empty">Looking up…</div>';
   const dayName = { wd: "Weekday", sa: "Saturday", su: "Sunday" }[tr.day];
   if (tr.view === "reach") return trReach(latlng, seq);
+  if (tr.view === "supply") return;
   try {
     const r = await fetch(`${API}/transit/at?${new URLSearchParams({ lat, lon: lng, zoom: map.getZoom(), view: tr.view })}&${trQuery()}`);
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
@@ -427,6 +437,47 @@ async function trReach(latlng, seq) {
   }
 }
 $("rch-access").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { tr.access = b.dataset.access; trRefresh(); } });
+// Supply: departures in an area – the same "Search in" choice as for Population and Roads (moved into this panel),
+// split on the map per grid square or administrative area (split.js)
+const areaHome = $("area").parentNode, areaNext = $("area").nextSibling;
+function trSupplyPlace(show = tr.on && tr.view === "supply") {
+  if (show && $("area").parentNode !== $("trn-supply-opts")) $("trn-supply-opts").append($("area"));
+  if (!show && $("area").parentNode !== areaHome) areaHome.insertBefore($("area"), areaNext);
+  $("trn-supply-opts").hidden = !show;
+  if (show) { setSplitSubject("transit"); if (transitLayer._map) map.removeLayer(transitLayer); }
+  else if (tr.on && !transitLayer._map) transitLayer.addTo(map);
+}
+let supplyCtl = null, supplyTimer = 0;
+async function trSupply() {
+  if (!tr.on || tr.view !== "supply") return;
+  supplyCtl?.abort();
+  const ctl = supplyCtl = new AbortController();
+  $("tr-info").innerHTML = '<div class="empty">Counting…</div>';
+  try {
+    const r = await fetch(`${API}/transit/supply/stats`, { method: "POST", headers: { "Content-Type": "application/json" }, signal: ctl.signal,
+      body: JSON.stringify({ geometry: populationGeometry(), day: tr.day, modes: [...tr.modes].join(",") }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    const top = d.modes[0]?.departures || 1, row = (l, v, hint = "") => `<tr${hint ? ` title="${esc(hint)}"` : ""}><td>${l}</td><td><b>${v}</b></td></tr>`;
+    $("tr-info").innerHTML = `<div class="md" style="margin-bottom:4px">${esc(areaName().replace(/^the v/, "V"))} · ${dayLabel()}, 07–19 h</div>
+      <table class="reach">
+        ${row("Departures", d.departures.toLocaleString())}
+        ${row("Per km²", d.area_km2 ? fmt(d.departures / d.area_km2, 1) : dash, `${fmt(d.area_km2, 2)} km²`)}
+        ${row("Per 1,000 people", d.population ? fmt(d.departures * 1000 / d.population, 1) : dash, d.population ? d.population.toLocaleString() + " inhabitants" : "No population data here")}
+        ${row("Stations", d.stations.toLocaleString())}</table>
+      ${d.modes.map(m => `<div class="md" style="display:flex;align-items:center;gap:6px;margin-top:4px">
+        <span style="flex:none;width:${Math.max(3, m.departures / top * 90)}px;height:6px;border-radius:3px;background:${trColor[m.cat]}"></span>
+        ${trName[m.cat]} · ${m.departures.toLocaleString()}</div>`).join("")}`;
+  } catch (err) {
+    if (err.name !== "AbortError") $("tr-info").innerHTML = `<div class="empty" style="color:#b91c1c">${esc(err.message)}</div>`;
+  }
+}
+document.addEventListener("areachange", trSupply);
+map.on("moveend", () => {
+  if (!tr.on || tr.view !== "supply" || area) return;
+  clearTimeout(supplyTimer); supplyTimer = setTimeout(trSupply, 400);
+});
+
 let reachTimer;
 $("rch-min").addEventListener("input", e => {
   tr.minutes = +e.target.value; $("rch-val").textContent = tr.minutes; trSave();

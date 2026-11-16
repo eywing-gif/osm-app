@@ -83,7 +83,10 @@
     .error { color: #b91c1c; padding: 14px 0; }
     svg text { fill: var(--muted); }
     .foot { margin-top: 30px; font-size: 11px; line-height: 1.5; color: var(--muted); }
-  </style>
+    table.am { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  table.am th { text-align: left; font-weight: 500; color: #6b7280; font-size: 12px; padding: 2px 6px; }
+  table.am td { padding: 3px 6px; border-top: 1px solid rgba(127, 127, 127, .25); }
+</style>
 </head>
 <body>
 <main>
@@ -254,6 +257,30 @@
         </div>
         <div class="legend" style="margin-top:6px">${c.minutes} min · ${num(c.speed_kmh, 1)} km/h = ${c.walk_m} m on foot · ÷ ${num(c.detour, 1)} detour = <b>&nbsp;${c.radius_m} m&nbsp;</b> radius · ${esc(c.dataset)}</div>`;
     } catch { el.innerHTML = catchHtml = ""; }
+    loadAmenities();
+  }
+
+  // amenities around the station: the rating of the place and the places within the same 5 minutes
+  async function loadAmenities() {
+    const el = $("catch"); if (!el) return;
+    try {
+      const r = await fetch(`${API}/amenities/at?${new URLSearchParams({ lon, lat })}`);
+      if (!r.ok) throw 0;
+      const a = await r.json();
+      const hue = Math.round(Math.max(0, Math.min(1, (6 - a.grade) / 5)) * 120);
+      catchHtml += `<h2 style="margin-top:16px">Amenities <small>what the place offers on foot</small></h2>
+        <div class="cards">
+          <div class="card"><b style="color:hsl(${hue},70%,35%)">${a.grade.toFixed(1)}</b><span>grade · amenity score ${a.score} of 100</span></div>
+          <div class="card"><b>${a.within15} of ${a.groups_total}</b><span>groups within 15 min</span></div>
+          <div class="card"><b>${num(a.proximity_min, 1)} min</b><span>proximity time</span></div>
+          <div class="card"><b>${a.local.filter(l => l.ok).length} of ${a.local.length}</b><span>local supply within 1 km</span></div>
+        </div>
+        <table class="am"><tr><th></th><th>within 5 min</th><th>10 min</th><th>nearest</th></tr>
+        ${a.groups.map(g => `<tr><td>${esc(g.name)}</td><td><b>${num(g.min5)}</b></td><td>${num(g.min10)}</td>
+          <td>${g.nearest[0] ? `${esc(g.nearest[0].name || g.nearest[0].type)} · ${num(g.nearest[0].walk_min, 1)} min` : "–"}</td></tr>`).join("")}</table>
+        <div class="legend" style="margin-top:6px">Places: OpenStreetMap · score and grade as in the Amenities tool (Walk Score method)</div>`;
+      el.innerHTML = catchHtml;
+    } catch { /* no amenities prepared: leave it out */ }
   }
 
   async function load() {

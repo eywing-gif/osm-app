@@ -1,6 +1,6 @@
 # OSM Tag Search
 
-Desktop app: search OpenStreetMap tags, point info, population (grid), roads (lane-km), public transport (lines, reach), land use (OSM, CORINE, built-up).
+Desktop app: search OpenStreetMap tags, point info, population (grid), roads (lane-km), amenities (rating of a place), public transport (lines, reach, supply), land use (OSM, CORINE, built-up).
 
 ## Install
 
@@ -53,9 +53,9 @@ System packages (PostgreSQL, …) stay; the script prints the command to remove 
 Downloads and the import state live in `data/` (`state.json`). One download job runs at a time.
 
 ## Layout
-- `backend/` FastAPI: `main` (search), `areas`, `features` (point info), `population` (grid tiles), `landuse` (OSM landuse), `roads` (lane-km), `transit`, `reach` (isochrones), `datasets` (settings API), `catalog` (what can be downloaded), `appinfo` (version, update), `common` (paths, databases, state)
-- `pipeline/` imports, run as `venv/bin/python -m pipeline.<name>`: `osm` (+ `roads`), `population`, `built`, `transit` (= `gtfs` → `snap` → `centres` → `lines`), `update`
-- `frontend/` `index.html` + `app.css`; scripts in load order: `core` (map, sidebar), `layers` (overlays, legend), `search`, `library`, `inspect`, `landuse`, `roads`, `transit`; `settings.js` / `settings.css`; `station.html` (station window)
+- `backend/` FastAPI: `main` (search), `areas`, `features` (point info), `population` (grid tiles), `landuse` (OSM landuse), `roads` (lane-km), `amenities` + `amenity_catalog` (places, scores), `supply` (transit departures by area), `transit`, `reach` (isochrones), `datasets` (settings API), `catalog` (what can be downloaded), `appinfo` (version, update), `common` (paths, databases, state)
+- `pipeline/` imports, run as `venv/bin/python -m pipeline.<name>`: `osm` (+ `roads`, `amenities`; `prepare` runs both for an older import), `population`, `built`, `transit` (= `gtfs` → `snap` → `centres` → `lines`), `update`
+- `frontend/` `index.html` + `app.css`; scripts in load order: `core` (map, sidebar), `layers` (overlays, legend), `search`, `library`, `inspect`, `landuse`, `roads`, `split` (grid / area views), `amenities`, `transit`; `settings.js` / `settings.css`; `station.html` (station window)
 
 Another dataset: add an entry to `backend/catalog.py` (and an importer in `pipeline/` if the format is new).
 Tests / a second set of data: `OSMAPP_DATA=/other/dir OSMAPP_DB_PREFIX=t_ …` uses its own folder and databases.

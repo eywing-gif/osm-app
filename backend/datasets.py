@@ -12,7 +12,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import catalog, population, reach, roads, transit
+from . import amenities, catalog, population, reach, roads, supply, transit
 from .common import DATA, DB_POP, PREFIX, ROOT, db_transit_name, dsn, load_state, update_state
 
 router = APIRouter(prefix="/datasets")
@@ -103,10 +103,17 @@ def active():
 
 
 def _roads_ready() -> bool:
+    """The analyses made from the map data exist (road lanes and amenities: pipeline/prepare.py)."""
     try:
-        return roads.has_cells()
+        return roads.has_cells() and amenities.prepared()
     except psycopg.Error:
         return False
+
+
+def clear_caches():
+    """New data or a finished job: forget what was computed from the old one."""
+    for m in (transit, reach, roads, supply, amenities, population):
+        m.clear_caches()
 
 
 # ---------- jobs ----------
@@ -130,10 +137,7 @@ def job_status():
     prog = next((l for l in reversed(lines) if l.startswith("@progress ")), "@progress 0").split(" ", 2)
     if rc is not None and not JOB["done"]:
         JOB["done"] = True
-        transit.clear_caches()
-        reach.clear_caches()
-        roads.clear_caches()
-        population.clear_caches()
+        clear_caches()
     state = "running" if rc is None else "done" if rc == 0 else "cancelled" if rc < 0 else "failed"
     text = prog[2] if len(prog) > 2 else ""
     if state == "failed":
@@ -188,7 +192,7 @@ def osm_update(req: Regions):
 @router.post("/osm/roads")
 def osm_roads():
     """Road lanes per 1 km square for the Roads layer (also part of every map import)."""
-    return start("Prepare roads", "pipeline.roads")
+    return start("Prepare analyses", "pipeline.prepare")
 
 
 @router.delete("/osm/{region:path}")
@@ -231,10 +235,7 @@ def activate(kind: str, ds: str):
     if ds not in KINDS[kind][2]():
         raise HTTPException(400, "Not installed")
     update_state(lambda st: st.setdefault(kind, {}).__setitem__("active", ds))
-    transit.clear_caches()
-    reach.clear_caches()
-    roads.clear_caches()
-    population.clear_caches()
+    clear_caches()
     return {"ok": True}
 
 
@@ -248,8 +249,5 @@ def remove(kind: str, ds: str):
         with psycopg.connect(dsn(DB_POP), autocommit=True) as c:
             c.execute(f"DROP TABLE IF EXISTS {'pop' if kind == 'population' else 'built'}_{ds}")
     update_state(lambda st: st.get(kind, {}).get("active") == ds and st[kind].pop("active"))
-    transit.clear_caches()
-    reach.clear_caches()
-    roads.clear_caches()
-    population.clear_caches()
+    clear_caches()
     return {"ok": True}
