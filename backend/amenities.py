@@ -69,6 +69,30 @@ class Places:
         e = np.array(edges, dtype=float).reshape(-1, 2)
         self.green_edges = cKDTree(e * self.k) if len(e) else None
         self.subs = arr[:, 1]
+        self._sub_trees = {}
+
+    def sub_tree(self, gi: int, sub: str):
+        """Tree of one type of place (e.g. the supermarkets of the daily needs), or None."""
+        if (gi, sub) not in self._sub_trees:
+            si = [s[0] for s in GROUPS[gi]["subs"]].index(sub)
+            sel = self.idx[gi][self.subs[self.idx[gi]] == si] if len(self.idx[gi]) else []
+            self._sub_trees[(gi, sub)] = cKDTree(np.array([[self.rows[r][2], self.rows[r][3]] for r in sel]) * self.k) if len(sel) else None
+        return self._sub_trees[(gi, sub)]
+
+    def local_count(self, pts) -> np.ndarray:
+        """BBSR local supply: how many of supermarket, pharmacy, doctor, school are within 1 km (straight)."""
+        n = np.zeros(len(pts), dtype=int)
+        for _, gi, sub in LOCAL:
+            tree = self.sub_tree(gi, sub)
+            if tree is not None:
+                d, _ = tree.query(pts * self.k, k=1, distance_upper_bound=BBSR_M)
+                n += np.isfinite(d)
+        return n
+
+    def diversity(self, pts) -> np.ndarray:
+        """Evenness of the groups within 10 minutes on foot (0–1)."""
+        counts = np.array([self.counts(pts, gi, 10 * WALK_M_MIN) for gi in range(len(GROUPS))]).T
+        return diversity(counts)
 
     def nearest(self, pts, gi: int, n: int):
         """Walking metres to the n nearest places of group gi (inf where there are fewer), and their row numbers."""
@@ -164,12 +188,8 @@ def local_supply(pl: Places, pt, lon, lat) -> list[dict]:
     """BBSR local supply: the nearest supermarket, pharmacy, doctor, school, transit stop (straight distance)."""
     out = []
     for label, gi, sub in LOCAL:
-        si = [s[0] for s in GROUPS[gi]["subs"]].index(sub)
-        sel = pl.idx[gi][pl.subs[pl.idx[gi]] == si] if len(pl.idx[gi]) else []
-        d = None
-        if len(sel):
-            xy = np.array([[pl.rows[r][2], pl.rows[r][3]] for r in sel]) * pl.k
-            d = float(np.min(np.hypot(*(xy - pt[0] * pl.k).T)))
+        tree = pl.sub_tree(gi, sub)
+        d = float(tree.query(pt[0] * pl.k, k=1)[0]) if tree is not None else None
         out.append({"name": label, "m": None if d is None or d > MAX_M else round(d)})
     try:
         with transit_db() as conn:
@@ -198,7 +218,7 @@ def prepared() -> bool:
 
 
 # ---------- map grid: score per square (from 100 m) or the places in each square ----------
-METRICS = ("score", "within15", "total", "area", "person")
+METRICS = ("score", "within15", "proximity", "diversity", "local", "total", "area", "person")
 CELLS_QUERY = """
 SELECT gx, gy FROM (SELECT ST_Envelope(ST_Transform(ST_MakeEnvelope(%(minx)s, %(miny)s, %(maxx)s, %(maxy)s, 3857), %(srid)s)) AS b) e,
   generate_series(floor(ST_XMin(b) / %(size)s)::int, floor(ST_XMax(b) / %(size)s)::int) gx,
@@ -225,9 +245,15 @@ def grid_json(z: int, x: int, y: int, metric: str, groups: tuple, want: int, sri
         pts = conn.execute(roads.CENTRES_QUERY, dict(size=size, srid=srid, xs=[k[0] for k in keys], ys=[k[1] for k in keys])).fetchall()
     xy = np.array(pts, dtype=float).reshape(-1, 2)
     pl = Places(box["minx"], box["miny"], box["maxx"], box["maxy"])
-    s = scores(pl, xy)
-    vals = s["score"] if metric == "score" else s["within15"].astype(float)
-    rows = [(px, py, v) for (px, py), v in zip(pts, vals.tolist()) if v > 0]
+    if metric == "diversity":
+        vals = pl.diversity(xy) * 100                       # per cent, so the squares show whole numbers
+    elif metric == "local":
+        vals = pl.local_count(xy).astype(float)
+    else:
+        s = scores(pl, xy)
+        vals = {"score": s["score"], "within15": s["within15"].astype(float), "proximity": s["proximity_min"]}[metric]
+    keep = (lambda v: v < 59.5) if metric == "proximity" else (lambda v: v > 0)     # nothing near: leave the square empty
+    rows = [(px, py, v) for (px, py), v in zip(pts, vals.tolist()) if keep(v)]
     with db() as conn:
         return population.tile_json(conn, rows, srid, box, res, size, lambda v: round(v))
 
@@ -242,6 +268,8 @@ def grid_tile(z: int, x: int, y: int, metric: str = "score", groups: str = "", s
     gs = tuple(sorted(GROUP_IDS.index(g) for g in groups.split(",") if g in GROUP_IDS)) or tuple(range(len(GROUPS)))
     srid, table = roads.grid_srid()
     cell = 100
+    if metric in ("diversity", "proximity"):
+        size = max(size, 200)          # more work per square: at least 200 m
     if metric == "person":
         cell, size = population.grid().cell if table else 1000, max(size, 1000)
     return population.tile_response(grid_json(z, x, y, metric, gs, min(size, 100000), srid, table if metric == "person" else None, cell))
@@ -301,10 +329,8 @@ def stats(req: Area):
     local = {}
     # local supply per inhabitant: straight distance to the nearest supermarket / pharmacy / doctor / school
     for label, gi, sub in LOCAL:
-        si = [x[0] for x in GROUPS[gi]["subs"]].index(sub)
-        sel = pl.idx[gi][pl.subs[pl.idx[gi]] == si] if len(pl.idx[gi]) else []
-        if len(sel):
-            tree = cKDTree(np.array([[pl.rows[r][2], pl.rows[r][3]] for r in sel]) * pl.k)
+        tree = pl.sub_tree(gi, sub)
+        if tree is not None:
             d, _ = tree.query(pts * pl.k, k=1)
             local[label] = round(float((w * (d <= BBSR_M)).sum() / w.sum() * 100), 1)
         else:

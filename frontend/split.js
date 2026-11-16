@@ -7,7 +7,8 @@ const SPLIT_LEVELS = { 4: ["State", "admin_level 4: Bundesland"], 6: ["County", 
   8: ["Town", "admin_level 8: Gemeinde, Stadt"], 9: ["Borough", "admin_level 9: Stadtbezirk"], 10: ["Quarter", "admin_level 10: Stadtteil, Ortsteil"] };
 const SPLITS = [["grid", "Grid", "Squares – size in the footer"], ...Object.entries(SPLIT_LEVELS).map(([l, [n, h]]) => [l, n, h])];
 const SPLIT_SCALE = ["#fff7ec", "#fdd49e", "#fc8d59", "#d7301f", "#7f0000", "#2b0000"];
-const SPLIT_MODES = { score: "Score", within15: "15 min", total: "Total", area: "per km²", person: "per person" };
+const SPLIT_MODES = { score: "Walk Score method", within15: "15-minute city", proximity: "Proximity time", diversity: "Variety",
+  local: "Local supply (BBSR)", total: "Total", area: "per km²", person: "per person" };
 const SCORE_SCALE = ["#b91c1c", "#f97316", "#facc15", "#a3e635", "#16a34a", "#065f46"];   // bad → good (linear scores)
 const SPLIT = "Split view";
 const dayLabel = () => ({ wd: "Weekday", sa: "Saturday", su: "Sunday" })[typeof tr === "undefined" ? "wd" : tr.day];
@@ -39,9 +40,12 @@ const SUBJECTS = {
     value: (a, m) => m === "total" ? a.dep : m === "area" ? (a.km2 ? a.dep / a.km2 : null) : a.population ? a.dep * 1000 / a.population : null,
   },
   amenities: {
-    title: "Amenities", modes: ["score", "within15", "total", "area", "person"], gridOnly: ["score", "within15"],
-    linear: { score: [0, 100], within15: [0, 10] },
-    unit: { score: "Amenity score 0–100 (grade 1–6)", within15: "groups within 15 min (of 10)", total: "places", area: "places per km²", person: "places per 1,000 inhabitants" },
+    title: "Amenities", modes: ["score", "within15", "proximity", "diversity", "local", "total", "area", "person"],
+    gridOnly: ["score", "within15", "proximity", "diversity", "local"],
+    linear: { score: [0, 100], within15: [0, 10], proximity: [30, 0], diversity: [0, 100], local: [0, 4] },   // [bad, good]
+    unit: { score: "amenity score 0–100 (grade 1–6)", within15: "groups within 15 min on foot (of 10)", proximity: "minutes to the 5 nearest, mean of the groups",
+      diversity: "evenness of the groups within 10 min (%)", local: "supermarket, pharmacy, doctor, school within 1 km (of 4)",
+      total: "places", area: "places per km²", person: "places per 1,000 inhabitants" },
     range: { total: [1, 200], area: [1, 500], person: [1, 200] },
     note: () => typeof amenSel === "undefined" ? "" : `${amenSel.size} of 10 groups`,
     grid: (z, x, y, m) => `${API}/amenities/grid/${z}/${x}/${y}?` + new URLSearchParams({ metric: m, groups: [...amenSel].join(","), size: gridSizeFor("amenities"), v: dataInfo.osm.join() }),
@@ -61,7 +65,7 @@ const splitOpacity = () => store.get("splitOpacity", store.get("roadOpacity", 0.
 const rangeNow = () => splitView !== "grid" && mode() === "total" && splitRange ? splitRange : subject().range[mode()];
 const splitT = v => {
   const lin = linearNow(), [lo, hi] = lin || rangeNow();
-  return Math.min(1, Math.max(0, lin ? (v - lo) / (hi - lo) : Math.log(v / lo) / Math.log(hi / lo)));
+  return Math.min(1, Math.max(0, lin ? (v - lo) / (hi - lo) : Math.log(v / lo) / Math.log(hi / lo)));     // linear [bad, good]: may run backwards
 };
 const splitColor = v => rampColor(linearNow() ? SCORE_SCALE : SPLIT_SCALE, splitT(v));
 const splitFmt = v => v == null ? dash : fmt(v, v < 10 ? 1 : 0);
@@ -213,25 +217,31 @@ map.on("click", async e => {
 // ---- legend block: value (total / per km² / per person), scale, strength
 legend.insertAdjacentHTML("beforeend", `<div id="leg-split" hidden>
     <button type="button" id="split-close" class="leg-x" title="Hide" aria-label="Hide the split view">×</button><b id="split-title"></b>
-    <div class="seg" id="split-mode" style="margin:4px 0;width:270px">${Object.entries(SPLIT_MODES).map(([k, n]) => `<button type="button" data-m="${k}">${n}</button>`).join("")}</div>
+    <div class="seg" id="split-mode" style="margin:4px 0;width:270px">${Object.entries(SPLIT_MODES).map(([k, n]) => `<button type="button" data-m="${k}">${{ total: "Total", area: "per km²", person: "per person" }[k] || n}</button>`).join("")}</div>
+    <select id="split-method" style="margin:0 0 4px;width:270px;font:inherit" aria-label="Method"></select>
     <div class="grad" id="split-grad" style="width:270px"></div>
     <div class="ticks" id="split-ticks" style="position:relative;display:block;height:13px;width:270px"></div>
     <label class="op">Strength <input type="range" id="split-op" min="20" max="100" step="5" value="${Math.round(splitOpacity() * 100)}" aria-label="Split view strength"></label>
     <div class="note" id="split-note"></div></div>`);
 function renderSplitLegend() {
   const s = subject(), m = mode();
+  // the methods (grid only) in a list, the counts as buttons
+  const methods = splitView === "grid" ? s.gridOnly || [] : [];
   document.querySelectorAll("#split-mode button").forEach(b => {
     b.classList.toggle("on", b.dataset.m === m);
-    b.hidden = !s.modes.includes(b.dataset.m) || splitView !== "grid" && !!s.gridOnly?.includes(b.dataset.m);
+    b.hidden = !s.modes.includes(b.dataset.m) || !!s.gridOnly?.includes(b.dataset.m);
   });
+  $("split-method").hidden = !methods.length;
+  $("split-method").innerHTML = `<option value="">Count places …</option>` + methods.map(k => `<option value="${k}">${SPLIT_MODES[k]}</option>`).join("");
+  $("split-method").value = methods.includes(m) ? m : "";
   const lin = linearNow(), pal = lin ? SCORE_SCALE : SPLIT_SCALE;
   $("split-grad").style.background = `linear-gradient(to right, ${pal.map((c, i) => `${c} ${Math.round(i / (pal.length - 1) * 100)}%`).join(", ")})`;
   const [lo, hi] = lin || rangeNow(), dyn = !lin && rangeNow() === splitRange, nice = v => Number(v.toPrecision(v < 10 ? 1 : 2));
-  const ticks = m === "score" ? [0, 25, 50, 70, 90, 100] : lin ? [0, 2, 4, 6, 8, 10] : [0, 1, 2, 3, 4].map(i => nice(lo * (hi / lo) ** (i / 4))), last = ticks.at(-1);
+  const ticks = m === "score" ? [0, 25, 50, 70, 90, 100] : lin ? [0, 1, 2, 3, 4].map(i => nice(lo + (hi - lo) * i / 4) || 0) : [0, 1, 2, 3, 4].map(i => nice(lo * (hi / lo) ** (i / 4))), last = ticks.at(-1);
   $("split-ticks").innerHTML = ticks.map(v => `<span style="position:absolute;${v === last ? "right:0" : v === ticks[0] ? "left:0" : `left:${Math.round(splitT(v) * 100)}%;transform:translateX(-50%)`}">${v.toLocaleString()}${v === last && !dyn && !lin ? "+" : ""}</span>`).join("");
   const where = SPLIT_LEVELS[splitView] ? SPLIT_LEVELS[splitView][0] : `grid ${gridSizeFor(splitSubject) ? sizeName(gridSizeFor(splitSubject)) : "(auto)"}`;
-  $("split-title").textContent = `${s.title} · ${where}`;
-  $("split-note").textContent = s.unit[m] + (m === "total" && splitView === "grid" ? " per square" : "") + (s.note ? " · " + s.note() : "");
+  $("split-title").textContent = `${s.title} · ${s.gridOnly?.includes(m) ? SPLIT_MODES[m] + " · " : ""}${where}`;
+  $("split-note").textContent = s.unit[m] + (m === "total" && splitView === "grid" ? " per square" : "") + (s.note && !s.gridOnly?.includes(m) ? " · " + s.note() : "");
 }
 legendHooks.push(() => {
   const on = map.hasLayer(splitGroup);
@@ -240,11 +250,12 @@ legendHooks.push(() => {
   return on;
 });
 $("split-close").addEventListener("click", () => setSplitView("off"));
-$("split-mode").addEventListener("click", e => {
-  const b = e.target.closest("button"); if (!b) return;
-  splitMode = b.dataset.m; store.set("splitMode", splitMode);
+function setSplitMode(m) {
+  splitMode = m; store.set("splitMode", m);
   splitRedraw();
-});
+}
+$("split-mode").addEventListener("click", e => { const b = e.target.closest("button"); if (b) setSplitMode(b.dataset.m); });
+$("split-method").addEventListener("change", e => setSplitMode(e.target.value || "area"));
 $("split-op").addEventListener("input", e => {
   store.set("splitOpacity", e.target.value / 100);
   splitGrid.setOpacity(e.target.value / 100);

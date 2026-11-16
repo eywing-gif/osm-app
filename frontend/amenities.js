@@ -53,6 +53,17 @@ const METHODS = `<details class="am-methods"><summary>Methods</summary>
   <p><b>Local supply</b> – BBSR: supermarket, pharmacy, doctor, school, transit stop within 1 km (straight line).</p>
   <p>Walking: 4.5 km/h, ways 1.2 × the straight line. Places: OpenStreetMap.</p></details>`;
 
+// ---- the methods: five ways to measure the same – how much a place offers on foot. One card each, with its map.
+const mapBtn = m => `<button type="button" class="am-map" data-map="${m}" title="Show this method on the map (grid)">Map</button>`;
+const card = (m, title, source, body) => `<section class="am-card"><header><b>${title}</b>${mapBtn(m)}</header>
+  <div class="am-src">${source}</div>${body}</section>`;
+function amenMap(m) {           // the score map of a method: grid view, that method
+  if (area) clearArea(false);
+  if (splitView !== "grid") setSplitView("grid");
+  setSplitMode(m);
+}
+const INTRO = `<div class="note" style="margin:8px 0 4px">Five methods, one question: how much can be reached on foot? They weigh it differently.</div>`;
+
 // ---- an area: places per group (the chosen groups count for the map) and the rating of its inhabitants
 function showAmenityArea() {
   const d = amenArea, km2 = d.area_km2;
@@ -63,13 +74,14 @@ function showAmenityArea() {
   setStatus(`in ${areaName()} · click the map for the rating of a place`);
   const p = d.people;
   $("res-list").innerHTML = `<div class="pop-stats">
-    ${p ? `<h4>Rating of the inhabitants</h4>
-      <div class="am-head">${gradeBadge(p.grade)}<div><b>${bandOf(p.score)}</b><small>Amenity score ${p.score} · ${d.population.toLocaleString()} inhabitants</small></div></div>
-      ${row("Score 70 or more", p.good + " %", "Share of the inhabitants with a very good or excellent score")}
-      ${row("15-min groups", fmt(p.within15, 1) + " of 10", "Mean over the inhabitants")}
-      ${row("Proximity time", fmt(p.proximity_min, 1) + " min")}
-      <h4>Local supply · within 1 km</h4>
-      ${Object.entries(p.local_pct).map(([k, v]) => row(k, v + " %", "Share of the inhabitants (straight line, BBSR)")).join("")}` : ""}
+    ${p ? `<h4>Rating of the inhabitants <small>(${d.population.toLocaleString()}, mean over where they live)</small></h4>${INTRO}
+      ${card("score", "Walk Score method", "Walk Score · weighted groups, distance decay",
+        `<div class="am-head">${gradeBadge(p.grade)}<div><b>${bandOf(p.score)}</b><small>score ${p.score} of 100</small></div></div>
+         ${row("Score 70 or more", p.good + " % of the people", "very good or excellent")}`)}
+      ${card("within15", "15-minute city", "Moreno et al. · groups within 15 min on foot", row("Groups reached", fmt(p.within15, 1) + " of 10"))}
+      ${card("proximity", "Proximity time", "Bruno et al. 2024 · minutes to the nearest places", row("Mean time", fmt(p.proximity_min, 1) + " min"))}
+      ${card("local", "Local supply", "BBSR · within 1 km (straight line)",
+        Object.entries(p.local_pct).map(([k, v]) => row(k, v + " % of the people")).join(""))}` : ""}
     <h4>Places <span class="rd-all"><a data-am="shop">shopping</a> <a data-am="all">all</a> <a data-am="none">none</a></span></h4>
     ${d.groups.map(g => `<details class="am-group"><summary><label class="row rd-type${amenSel.has(g.id) ? "" : " off"}">
         <span><input type="checkbox" data-am="${g.id}"${amenSel.has(g.id) ? " checked" : ""}> <i class="am-dot" style="background:${amenCat.groups.find(c => c.id === g.id).color}"></i>${g.name}</span>
@@ -89,17 +101,22 @@ function showAmenityPoint() {
   setStatus('Rating of the clicked place · <a href="#" id="am-back">back to the area</a>', false, true);
   const maxW = Math.max(...d.groups.map(g => g.weight));
   $("res-list").innerHTML = `<div class="pop-stats">
-    <div class="am-head">${gradeBadge(d.grade)}<div><b>${bandOf(d.score)}</b><small>Amenity score ${d.score} of 100</small></div></div>
-    ${row("15-min groups", `${d.within15} of ${d.groups_total}`, "Groups with a place within 15 minutes on foot")}
-    ${row("Proximity time", fmt(d.proximity_min, 1) + " min", "Mean walking time to the 5 nearest places per group")}
-    ${row("Diversity", fmt(d.diversity, 2), "Evenness of the groups within 10 minutes: 1 = all groups equally")}
-    <h4>Score by group <small>(points of weight)</small></h4>
-    ${d.groups.map(g => `<div class="am-bar" title="${esc(g.name)}: ${fmt(g.points, 2)} of ${g.weight} points">
-      <span>${g.name}</span><i><b style="width:${g.points / maxW * 100}%;background:${amenCat.groups.find(c => c.id === g.id).color}"></b>
-      <em style="width:${g.weight / maxW * 100}%"></em></i><small>${fmt(g.points, 1)}/${g.weight}</small></div>`).join("")}
-    <h4>Local supply (BBSR) · within 1 km</h4>
-    ${d.local.map(l => row(`${l.ok ? "✓" : "✗"} ${l.name}`, l.m == null ? "far" : l.m.toLocaleString() + " m")).join("")}
-    <h4>Groups <small>(places within 5 · 10 · 15 min)</small></h4>
+    ${INTRO}
+    ${card("score", "Walk Score method", "Walk Score · weighted groups, full points within 5 min, none after 30 min",
+      `<div class="am-head">${gradeBadge(d.grade)}<div><b>${bandOf(d.score)}</b><small>score ${d.score} of 100</small></div></div>
+       ${d.groups.map(g => `<div class="am-bar" title="${esc(g.name)}: ${fmt(g.points, 2)} of ${g.weight} points">
+         <span>${g.name}</span><i><b style="width:${g.points / maxW * 100}%;background:${amenCat.groups.find(c => c.id === g.id).color}"></b>
+         <em style="width:${g.weight / maxW * 100}%"></em></i><small>${fmt(g.points, 1)}/${g.weight}</small></div>`).join("")}`)}
+    ${card("within15", "15-minute city", "Moreno et al. · which groups are within 15 min on foot",
+      `<div class="am-big">${d.within15} <small>of ${d.groups_total} groups</small></div>
+       <div class="am-chips">${d.groups.map(g => `<span class="${g.within15 ? "ok" : "no"}">${g.within15 ? "✓" : "✗"} ${g.name}</span>`).join("")}</div>`)}
+    ${card("proximity", "Proximity time", "Bruno et al. 2024 · walking time to the 5 nearest places, mean of the groups",
+      `<div class="am-big">${fmt(d.proximity_min, 1)} <small>min</small></div>`)}
+    ${card("diversity", "Variety", "Shannon / Pielou · how evenly the groups are mixed within 10 min",
+      `<div class="am-big">${Math.round(d.diversity * 100)} <small>% (100 = all groups equally)</small></div>`)}
+    ${card("local", "Local supply", "BBSR · within 1 km (straight line)",
+      d.local.map(l => row(`${l.ok ? "✓" : "✗"} ${l.name}`, l.m == null ? "far" : l.m.toLocaleString() + " m")).join(""))}
+    <h4>Places by group <small>(within 5 · 10 · 15 min)</small></h4>
     ${d.groups.map(g => `<details class="am-group"><summary><div class="row"><span><i class="am-dot" style="background:${amenCat.groups.find(c => c.id === g.id).color}"></i>${g.name}</span>
         <b>${g.min5} · ${g.min10} · ${g.min15}</b></div></summary>
         ${g.nearest.map(n => row(esc(n.name || n.type), `${fmt(n.walk_min, 1)} min`, n.type)).join("") || '<div class="note">nothing within 60 min</div>'}
@@ -132,6 +149,8 @@ $("res-list").addEventListener("change", e => {
   amenGroupsChanged();
 });
 $("res-list").addEventListener("click", e => {
+  const mb = e.target.closest("[data-map]");
+  if (mb) return amenMap(mb.dataset.map);
   const a = e.target.closest("a[data-am]");
   if (!a || !amenArea) return;
   e.preventDefault();
