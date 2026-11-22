@@ -34,7 +34,10 @@ def fetch(region: str, fresh: bool = False):
     f = catalog.osm_file(region)
     if f.exists() and not fresh:
         return
-    download(f"{catalog.GEOFABRIK_PREFIX}{region}-latest.osm.pbf", f, region.rsplit("/", 1)[-1])
+    url, _ = catalog.osm_source(region)
+    if not url.endswith("-latest.osm.pbf"):
+        log(f"{region}: newest extract not available, using {url.rsplit('/', 1)[-1]}")
+    download(url, f, region.rsplit("/", 1)[-1])
     update_state(lambda st: st.setdefault("osm", {}).setdefault("downloaded", {}).__setitem__(region, f.stat().st_size))
 
 

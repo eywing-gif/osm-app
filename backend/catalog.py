@@ -96,11 +96,61 @@ def osm_regions() -> list[dict]:
     for ft in feats:
         pbf = ft["properties"].get("urls", {}).get("pbf")
         if pbf:
-            by_key[ft["properties"]["id"]] = pbf[len(GEOFABRIK_PREFIX):].removesuffix("-latest.osm.pbf")
+            by_key[ft["properties"]["id"]] = region_id(pbf)
+            _urls[by_key[ft["properties"]["id"]]] = pbf
     out = [{"id": by_key[p["id"]], "name": p["name"], "parent": by_key.get(p.get("parent"))}
            for ft in feats if (p := ft["properties"])["id"] in by_key]
     _cache = sorted(out, key=lambda r: r["name"])
     return _cache
+
+
+_urls: dict = {}                      # region id -> download address (from the index)
+
+
+def region_id(pbf_url: str) -> str:
+    """Our id of a region from its download address. Geofabrik moved each region into a folder of its own
+    (…/germany/berlin-latest.osm.pbf became …/germany/berlin/berlin-latest.osm.pbf, Nov 2026): both give
+    'europe/germany/berlin', so downloads and the regions in use keep their names."""
+    parts = pbf_url[len(GEOFABRIK_PREFIX):].removesuffix("-latest.osm.pbf").split("/")
+    if len(parts) >= 2 and parts[-1] == parts[-2]:
+        parts.pop()
+    return "/".join(parts)
+
+
+def osm_url(region: str) -> str:
+    """Download address of a region (as the index has it; the old layout if the index does not know it)."""
+    osm_regions()
+    return _urls.get(region) or f"{GEOFABRIK_PREFIX}{region}-latest.osm.pbf"
+
+
+def osm_source(region: str) -> tuple[str, int]:
+    """(address, bytes) to download: the -latest extract, or – if the server does not deliver it (seen while Geofabrik
+    moved its files, Nov 2026) – the newest dated one that it delivers (…-261121.osm.pbf) from the region's folder. Bytes 0 if unknown."""
+    import re
+    url = osm_url(region)
+
+    def size(u):
+        req = urllib.request.Request(u, headers={"User-Agent": USER_AGENT, "Range": "bytes=0-0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return int((r.headers.get("Content-Range") or "/0").rsplit("/", 1)[-1] or 0)
+    try:
+        return url, size(url)
+    except Exception:
+        pass
+    folder, name = url.rsplit("/", 1)
+    stem = name.removesuffix("-latest.osm.pbf")
+    try:
+        req = urllib.request.Request(folder + "/", headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            dated = sorted(set(re.findall(rf'[/"]({re.escape(stem)}-\d{{6}}\.osm\.pbf)"', r.read().decode("utf-8", "replace"))))
+    except Exception:
+        dated = []
+    for d in dated[::-1][:5]:            # newest first; the newest few may be listed but not delivered yet
+        try:
+            return f"{folder}/{d}", size(f"{folder}/{d}")
+        except Exception:
+            continue
+    return url, 0
 
 
 def osm_file(region_id: str):
@@ -123,12 +173,7 @@ def osm_sizes(ids: list[str] | None = None) -> dict[str, int]:
     todo = [i for i in ids or [] if i not in _sizes]
 
     def head(i):
-        req = urllib.request.Request(f"{GEOFABRIK_PREFIX}{i}-latest.osm.pbf", method="HEAD", headers={"User-Agent": USER_AGENT})
-        try:
-            with urllib.request.urlopen(req, timeout=15) as r:
-                return i, int(r.headers.get("Content-Length") or 0)
-        except Exception:
-            return i, 0
+        return i, osm_source(i)[1]
     if todo:
         with ThreadPoolExecutor(8) as ex:
             _sizes.update({i: n for i, n in ex.map(head, todo) if n})

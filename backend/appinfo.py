@@ -42,17 +42,35 @@ def info():
     return {"version": cfg["version"], "repo": cfg["repo"], "mode": "git" if (ROOT / ".git").exists() else "zip", "checks": checks()}
 
 
+def _tags(repo: str) -> list[str]:
+    """Version tags on GitHub: the API (twice – it answers 502/504 now and then), else git itself, which uses another server."""
+    err = None
+    for attempt in range(2):
+        try:
+            return [t["name"] for t in fetch_json(f"https://api.github.com/repos/{repo}/tags", timeout=15)]
+        except Exception as e:
+            err = e
+            time.sleep(1 + attempt)
+    if shutil.which("git"):
+        import subprocess
+        try:
+            out = subprocess.run(["git", "ls-remote", "--tags", f"https://github.com/{repo}.git"], capture_output=True, text=True, timeout=30,
+                                 env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+            if out.returncode == 0:
+                return [l.rsplit("/", 1)[-1] for l in out.stdout.splitlines() if not l.endswith("^{}")]
+        except (OSError, subprocess.SubprocessError):
+            pass
+    code = getattr(err, "code", None)
+    raise HTTPException(502, f"GitHub is not answering ({'busy, HTTP ' + str(code) if code else err}) – try again in a minute.")
+
+
 @router.get("/latest")
 def latest():
     """The newest version tag on GitHub (tags like v0.6.0)."""
     cfg = config()
     if cfg["repo"].startswith("OWNER/"):
         raise HTTPException(400, "Repository not set (app.json).")
-    try:
-        tags = fetch_json(f"https://api.github.com/repos/{cfg['repo']}/tags", timeout=15)
-    except Exception as e:
-        raise HTTPException(502, f"GitHub not reachable: {e}")
-    names = sorted((t["name"] for t in tags if parse(t["name"])), key=parse, reverse=True)
+    names = sorted((t for t in _tags(cfg["repo"]) if parse(t)), key=parse, reverse=True)
     if not names:
         raise HTTPException(404, "No version published yet.")
     return {"latest": names[0], "current": cfg["version"], "newer": parse(names[0]) > parse(cfg["version"])}
