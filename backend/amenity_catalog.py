@@ -91,13 +91,83 @@ GROUPS = [
         ("museum", "Museum, gallery", [("tourism", ["museum", "gallery"])], None),
         ("theatre", "Theatre, concerts", [("amenity", ["theatre", "arts_centre", "concert_hall"])], None),
         ("cinema", "Cinema", [("amenity", ["cinema"])], None),
-        ("attraction", "Sight, viewpoint, zoo", [("tourism", ["attraction", "viewpoint", "zoo", "theme_park", "aquarium"])], None),
+        ("attraction", "Sight", [("tourism", ["attraction"])], None),
         ("monument", "Castle, monument", [("historic", ["castle", "monument", "ruins", "city_gate", "fort", "palace"])], None),
         ("nightlife", "Club", [("amenity", ["nightclub"])], None),
         ("community", "Community centre", [("amenity", ["community_centre"])], None),
+        ("zoo", "Zoo, theme park", [("tourism", ["zoo", "theme_park", "aquarium"])], None),     # new subs at the end: old tables stay valid
+        ("viewpoint", "Viewpoint", [("tourism", ["viewpoint"])], None),
     ]),
 ]
 GROUP_IDS = [g["id"] for g in GROUPS]
+
+# Attractiveness: what is within ATTRACT_M (straight line) of a place, one index per field.
+#   weight w   how often people go there (rough visits per household and month, supermarket = 10: food shopping 2–3 × a
+#              week, clothes once a month, furniture once a year – German retail scheme "Fristigkeit des Bedarfs").
+#   ratio r    diminishing returns: the 2nd place of a type adds r × w, the 3rd r² × w … (geometric / exponential
+#              saturation, like Walk Score's falling shares for the 1st, 2nd … restaurant): a type gives at most w / (1 − r).
+#              Low r where one is enough (supermarket, school), high r where choice itself is the value ("love of variety":
+#              restaurants, clothes – Schiff 2015, Bakens et al.; shops cluster for comparison shopping).
+#   Green spaces (group "green") count once per type when their edge is within the radius.
+# Fields after the functions of the 15-minute city (Moreno et al. 2021), third places after Oldenburg 1989. Fields overlap.
+# Index 0–100: the points as a share of the most a field can give (attract_max), so the fields compare.
+# Types: {sub id: w} uses the field's ratio r, {sub id: (w, r)} its own.
+ATTRACT_M = 400
+ATTRACT = [
+    dict(id="a_daily", name="Daily needs", r=0.4, parts={
+        "daily": {"supermarket": (10, 0.5), "bakery": 6, "drugstore": 3, "convenience": 2, "butcher": 2, "greengrocer": 2, "beverages": 1.5},
+        "health": {"pharmacy": 2}}),
+    dict(id="a_periodic", name="Periodic needs", r=0.8, parts={
+        "periodic": {"clothes": (1.5, 0.9), "department": (1.5, 0.5), "gifts": 1, "books": 0.8, "shoes": 0.6, "pets": (0.6, 0.5),
+                     "electronics": 0.5, "sports_shop": 0.5, "toys": 0.5, "optician": (0.3, 0.5)}}),
+    dict(id="a_episodic", name="Episodic needs", r=0.6, parts={
+        "aperiodic": {"diy": 0.5, "furniture": (0.3, 0.8), "garden_centre": 0.3, "car": 0.2, "appliance": 0.2}}),
+    dict(id="a_health", name="Health", r=0.5, parts={
+        "health": {"pharmacy": (3, 0.3), "doctor": (3, 0.75), "dentist": 1, "therapy": 1, "hospital": 1}}),
+    dict(id="a_education", name="Education", r=0.4, parts={
+        "education": {"kindergarten": (3, 0.5), "school": 3, "library": 1, "university": 1, "courses": (1, 0.6)}}),
+    dict(id="a_culture", name="Culture", r=0.7, parts={
+        "culture": {"museum": 3, "theatre": 3, "cinema": 2, "nightlife": 1, "community": (1, 0.4)}, "education": {"library": (2, 0.4)}}),
+    dict(id="a_sights", name="Sights", r=0.7, parts={
+        "culture": {"attraction": 3, "zoo": (3, 0.5), "museum": 2, "monument": 2, "viewpoint": (1, 0.5)}}),
+    dict(id="a_food", name="Dining", r=0.85, parts={
+        "food": {"restaurant": (3, 0.92), "cafe": (3, 0.75), "fast_food": (2, 0.6), "bar": (1.5, 0.75), "ice_cream": (1.5, 0.5)}}),
+    dict(id="a_recreation", name="Recreation & sport", r=0.5, parts={
+        "green": {"park": 5, "forest": 3, "recreation": 2, "nature": 2, "garden": 1},
+        "sport": {"playground": 2, "fitness": 2, "sports_centre": 2, "swimming": 2, "pitch": 1, "climbing": 1, "leisure": 1}}),
+    dict(id="a_third", name="Third places", r=0.75, parts={
+        "food": {"cafe": 3, "bar": 2, "ice_cream": (1, 0.5)}, "education": {"library": (2, 0.4)}, "culture": {"community": (2, 0.4)},
+        "daily": {"bakery": (1, 0.5)}, "errands": {"hairdresser": (1, 0.5)}}),
+]
+ATTRACT_SUPPLY = ("a_daily", "a_periodic", "a_episodic")     # "a_supply": the three together
+
+
+def attract_weights(metric: str) -> dict:
+    """{(group index, sub index): (weight, ratio)} of an attractiveness metric (a_supply: daily + periodic + episodic)."""
+    ids = ATTRACT_SUPPLY if metric == "a_supply" else (metric,)
+    out = {}
+    for a in ATTRACT:
+        if a["id"] in ids:
+            for gid, subs in a["parts"].items():
+                g = GROUPS[GROUP_IDS.index(gid)]
+                sub_ids = [s[0] for s in g["subs"]]
+                for sid, v in subs.items():
+                    out[(GROUP_IDS.index(gid), sub_ids.index(sid))] = v if isinstance(v, tuple) else (v, a["r"])
+    return out
+
+
+def attract_max(metric: str) -> float:
+    """The most points a field can give (every type saturated): 100 % of the index."""
+    green = GROUP_IDS.index("green")
+    return sum(w if g == green else w / (1 - r) for (g, _), (w, r) in attract_weights(metric).items())
+
+
+def attract_catalog() -> list[dict]:
+    """For the browser: the fields with [weight, ratio] per type."""
+    return [a | {"parts": {g: {s: list(v) if isinstance(v, tuple) else [v, a["r"]] for s, v in subs.items()}
+                           for g, subs in a["parts"].items()}} for a in ATTRACT]
+
+
 GREEN = GROUP_IDS.index("green")
 GREEN_MIN_M2 = 5000            # smaller green spaces are not counted (house gardens, verges)
 
@@ -122,6 +192,12 @@ def code_sql(t: str = "t", green: bool | None = None) -> str:
                 cond = f"({cond}) AND {extra.format(**{k: col(k, t) for k in COLUMNS})}"
             whens.append(f"WHEN {cond} THEN {gi * 100 + si}")
     return "CASE " + " ".join(whens) + " END"
+
+
+def version() -> str:
+    """Changes when the tags behind the groups change: amenity_poi made with another one must be prepared again."""
+    import hashlib
+    return hashlib.sha1((code_sql("t", green=False) + code_sql("t", green=True) + str(GREEN_MIN_M2)).encode()).hexdigest()[:12]
 
 
 def catalog() -> list[dict]:

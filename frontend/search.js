@@ -51,7 +51,7 @@ function showResults(data) {
   });
   updateMarkerHint();
   const n = found.length, where = area ? `in ${area.name}` : "in the visible map area";
-  $("res-count").textContent = n.toLocaleString() + (data.truncated ? "+" : "");
+  $("res-count").textContent = n.toLocaleString(NUM) + (data.truncated ? "+" : "");
   $("res-label").textContent = n === 1 ? "object found" : "objects found";
   setStatus(n === 0 ? `No results ${where}.`
     : `${where}` + (data.truncated ? (area ? " – showing the first 2,000" : " – zoom in for all") : ""));
@@ -67,7 +67,7 @@ function showResults(data) {
       <span class="dot" style="background:${color(p.category)}"></span>
       <div><div class="rn${p.name ? "" : " none"}">${esc(p.name ?? "(no name)")}</div>
       <div class="rc">${esc(p.category ?? "")}</div></div></div>`;
-  }).join("") + (n > LIST_MAX ? `<div class="res-more">Showing the first ${LIST_MAX} of ${n.toLocaleString()} – all are on the map.</div>` : "");
+  }).join("") + (n > LIST_MAX ? `<div class="res-more">Showing the first ${LIST_MAX} of ${n.toLocaleString(NUM)} – all are on the map.</div>` : "");
 }
 
 // list <-> map: hover highlights the marker, click jumps to it
@@ -93,6 +93,7 @@ async function search() {
   if (isPopulationQuery(q)) { setSplitSubject("population"); return populationSearch(); }
   if (isRoadsQuery(q)) { setSplitSubject("roads"); return roadsSearch(); }
   if (isAmenityQuery(q)) { setSplitSubject("amenities"); return amenitySearch(); }
+  if (isWalkQuery(q)) { setSplitSubject("walk"); return amenitySearch(); }
   if (typeof amenSetPoint === "function") { amenSetPoint(null, false); amenDots.clearLayers(); }   // another search: no amenity marks
   if (source === "online" && !area && map.getZoom() < ONLINE_MIN_ZOOM) {
     clearResults();
@@ -139,7 +140,7 @@ const num = (v, d = 0, unit = "") => v == null ? dash : fmt(v, d) + unit;
 
 function showPopulation(d) {
   layer.clearLayers(); found = []; updateMarkerHint();
-  $("res-count").textContent = d.cells ? d.population.toLocaleString() : dash;
+  $("res-count").textContent = d.cells ? d.population.toLocaleString(NUM) : dash;
   $("res-label").textContent = "inhabitants";
   const where = areaName();
   if (!d.cells) {
@@ -161,7 +162,7 @@ function showPopulation(d) {
     ${section("Housing", row("Household size", num(d.hh_size, 2, " persons")), row("Living space per person", num(d.living_space, 1, " m²")),
       row("Net rent (excl. utilities)", num(d.rent_sqm, 2, " €/m²"), "Average of rented flats"),
       row("Owner-occupied", num(d.pct_owner, 1, " %"), "Share of flats lived in by their owners"), row("Vacant flats", num(d.pct_vacant, 1, " %")))}
-    <div class="note">${esc(d.dataset)} · ${d.cell_m} m grid. Cells cut by the border count in proportion to the part inside${d.border_cells ? ` (about ${d.border_cells.toLocaleString()} cell-equivalents on the border)` : ""}.
+    <div class="note">${esc(d.dataset)} · ${d.cell_m} m grid. Cells cut by the border count in proportion to the part inside${d.border_cells ? ` (about ${d.border_cells.toLocaleString(NUM)} cell-equivalents on the border)` : ""}.
       Averages are weighted by population. Very small areas are approximate.</div>
   </div>`;
 }
@@ -194,7 +195,7 @@ let editing = false;
 map.createPane("area").style.zIndex = 350;   // above map + slope, below the results
 const areaLayers = L.layerGroup().addTo(map);
 const AREA_STYLE = { color: "#2563eb", weight: 2.5 };
-const fmt = (n, digits = 1) => Number(n).toLocaleString(undefined, { maximumFractionDigits: digits });
+const fmt = (n, digits = 1) => Number(n).toLocaleString(NUM, { maximumFractionDigits: digits });
 
 function toggleAreaPicker(open = $("area-picker").hidden) {
   $("area-picker").hidden = !open;
@@ -503,7 +504,7 @@ function renderSuggest() {
         <div class="sg" role="option" data-i="${i}">
           <span class="dot" style="background:${color(`${x.key}=${x.value}`)}"></span>
           <span><span class="key">${highlight(x.key, t.includes("=") ? tKey : "")}=</span><span class="val">${highlight(x.value, tVal)}</span></span>
-          <span class="count">${x.count.toLocaleString()}</span>
+          <span class="count">${x.count.toLocaleString(NUM)}</span>
         </div>`).join("");
   }
   openSuggest();

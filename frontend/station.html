@@ -130,7 +130,7 @@
 
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const num = (n, d = 0) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
+  const num = (n, d = 0) => Number(n).toLocaleString("de-DE", { maximumFractionDigits: d });
   const perH = v => num(v, v < 10 ? 1 : 0);
   const mins = m => m == null ? "–" : (m < 10 ? num(m, 1) : Math.round(m)) + " min";
   const km = k => k == null ? "–" : num(k, k < 10 ? 1 : 0) + " km";

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Desktop window for OSM Tag Search.
+"""Desktop window for Spatial Analytics.
 
 Starts the FastAPI backend (from ./venv) on a free local port, shows the
 frontend in a native GTK/WebKit window and stops the backend when the window
@@ -22,14 +22,14 @@ try:
 except (ImportError, ValueError):           # no GTK / WebKit: the app opens in the web browser instead
     gi = None
 
-APP_ID = "osm-tag-search"
+APP_ID = "spatial-analytics"
 ROOT = Path(__file__).resolve().parent
 PYTHON = ROOT / "venv" / "bin" / "python"
-ICON = ROOT / "icon.svg"
+ICON = ROOT / "frontend" / "icon.svg"
 LOG = Path.home() / ".cache" / APP_ID / "server.log"
 
 LOADING_HTML = """<html><body style="font:15px system-ui;display:grid;place-items:center;height:90vh;color:#555">
-<div>Starting OSM Tag Search…</div></body></html>"""
+<div>Starting Spatial Analytics…</div></body></html>"""
 
 
 def die_with_parent():
@@ -62,7 +62,7 @@ class App:
             cwd=ROOT, stdout=self.log, stderr=subprocess.STDOUT,
             preexec_fn=die_with_parent)
 
-        self.win = Gtk.Window(title="OSM Tag Search")
+        self.win = Gtk.Window(title="Spatial Analytics")
         self.win.set_default_size(1200, 800)
         if ICON.exists():
             self.win.set_icon_from_file(str(ICON))
@@ -102,7 +102,7 @@ class App:
 
     def on_create(self, view, navigation_action):
         """A page of the app opens a new window (e.g. the station details): give it a window of its own."""
-        win = Gtk.Window(title="OSM Tag Search")
+        win = Gtk.Window(title="Spatial Analytics")
         win.set_default_size(660, 900)
         win.set_transient_for(self.win)
         if ICON.exists():
@@ -110,7 +110,7 @@ class App:
         new_view = WebKit2.WebView.new_with_related_view(view)
         new_view.connect("decide-policy", self.on_policy)
         new_view.connect("create", self.on_create)
-        new_view.connect("notify::title", lambda v, _p: win.set_title(v.get_title() or "OSM Tag Search"))
+        new_view.connect("notify::title", lambda v, _p: win.set_title(v.get_title() or "Spatial Analytics"))
         new_view.connect("close", lambda *_: win.destroy())
         win.connect("destroy", lambda *_: self.extra_windows.remove(win) if win in self.extra_windows else None)
         win.add(new_view)
@@ -153,7 +153,7 @@ def browser_mode():
             if server.poll() is not None:
                 sys.exit("The backend did not start (see above). Is PostgreSQL running? Run:  sh install.sh")
             time.sleep(0.2)
-    print(f"OSM Tag Search: {url}  (no desktop window: WebKitGTK missing) – stop with Ctrl+C")
+    print(f"Spatial Analytics: {url}  (no desktop window: WebKitGTK missing) – stop with Ctrl+C")
     webbrowser.open(url)
     try:
         server.wait()
@@ -167,7 +167,7 @@ def main():
     if gi is None:
         return browser_mode()
     GLib.set_prgname(APP_ID)  # matches the .desktop file, so GNOME shows the right icon
-    GLib.set_application_name("OSM Tag Search")
+    GLib.set_application_name("Spatial Analytics")
     app = App()
     try:  # newer PyGObject moved this into GLibUnix
         gi.require_version("GLibUnix", "2.0")

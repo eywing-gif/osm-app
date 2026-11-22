@@ -99,6 +99,8 @@ const TransitLayer = L.GridLayer.extend({
       if (view === "stations") {
         ctx.font = "11px system-ui, sans-serif"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
         // big stations first, so the small ones next to them stay visible
+        // names: the busiest stations of each tile (it lists them busiest first) – zoom 14 a few, 15 more, 16 all; never one over another
+        const placed = [], maxNames = z >= 16 ? Infinity : z >= 15 ? 10 : 4;
         for (const [lon, lat, name, parts, total] of data.s) {
           const [x, y] = pt(lat, lon), r = trRadius(total, z);
           // pie chart: every type of line gets a slice as big as its share of the departures
@@ -111,7 +113,9 @@ const TransitLayer = L.GridLayer.extend({
           }
           ctx.beginPath(); ctx.arc(x, y, r, 0, 7);
           ctx.lineWidth = 1.5; ctx.strokeStyle = "#fff"; ctx.stroke();
-          if (z >= 14) {   // names only when zoomed in
+          const box = z >= 14 && placed.length < maxNames && name && [x + r + 3, y - 7, x + r + 3 + ctx.measureText(name).width, y + 7];
+          if (box && !placed.some(b => box[0] < b[2] && b[0] < box[2] && box[1] < b[3] && b[1] < box[3])) {   // no name over another
+            placed.push(box);
             ctx.lineWidth = 3; ctx.strokeStyle = "rgba(255,255,255,.9)"; ctx.strokeText(name, x + r + 3, y);
             ctx.fillStyle = "#1f2328"; ctx.fillText(name, x + r + 3, y);
           }
@@ -174,9 +178,9 @@ function trRenderControls() {
   const zmin = Math.min(...[...tr.modes].map(m => TR_MIN_ZOOM[m]));
   $("tr-note").innerHTML = (tr.modes.size && map.getZoom() < zmin ? `<b>Zoom in to see the selected lines (from zoom ${zmin}).</b><br>` : "")
     + `Interval = average time between departures from 07:00 to 19:00 in the busier direction, all lines of that type together${day ? ` (timetable of ${day})` : ""}.
-       ${tr.view === "supply" ? "Supply: departures 07–19 h at the stations in the area (all chosen types); per km² and per 1,000 inhabitants. Map: Search in → split by." : ""}
+       ${tr.view === "supply" ? "Supply: departures 07–19 h at the stations in the area (all chosen types); per km² and per 1.000 inhabitants. Map: Search in → split by." : ""}
        ${tr.view === "reach" ? `Reach: to / from the stops ${tr.access === "bike" ? `bike ${BIKE_KMH} km/h` : `walk ${WALK_KMH} km/h`} × ${DETOUR} detour; changes on foot (≤ 200 m); wait = ½ interval; average day, not the exact timetable.` : ""}
-       ${tr.view === "stations" ? "Dot area = departures from the station (all types together); the colours show how they split between the types of line (names from zoom 14)." : tr.width === "freq" ? "Line width = frequency (from zoom 14 exactly proportional: every 5 min is twice as wide as every 10 min)." : "All lines have the same width."}
+       ${tr.view === "stations" ? "Dot area = departures from the station (all types together); the colours show how they split between the types of line (names from zoom 14: the busiest first, all from zoom 16)." : tr.width === "freq" ? "Line width = frequency (from zoom 14 exactly proportional: every 5 min is twice as wide as every 10 min)." : "All lines have the same width."}
        Lines follow the real tracks and roads where OpenStreetMap has the route, else straight between stops.
        Timetables: ${esc(dataInfo.transit_name || "–")}.`;
 }
@@ -289,7 +293,7 @@ function trRenderFilters() {
   $("trn-filter-tags").innerHTML = tr.mapFilterOpen ? "" : act.map(d => `<span class="sd-tag">${esc(d.label)}: <b>${esc(d.text())}</b> <a data-mclear="${d.key}" role="button" title="Remove this filter">×</a></span>`).join("")
     + (act.length > 1 ? '<a class="sd-reset" data-mclear="*" style="margin-top:0">Reset all</a>' : "");
   // the filters of the registry (centre, …) as groups of buttons; the number is how many stations there are in the visible map area
-  const cnt = tr.counts, num0 = n => n == null ? "" : `<small>${n.toLocaleString()}</small>`;
+  const cnt = tr.counts, num0 = n => n == null ? "" : `<small>${n.toLocaleString(NUM)}</small>`;
   $("trn-sfilters").innerHTML = SD_FILTERS.map(f => `
     <div class="sd-fgroup"><h4>${esc(f.title.replace(/\?$/, ""))}${f.multi ? " <span style='text-transform:none;letter-spacing:0;font-weight:400'>– several possible</span>" : ""}</h4>
       <div class="tr-dirs" role="${f.multi ? "group" : "radiogroup"}" aria-label="${esc(f.title)}">
@@ -301,7 +305,7 @@ function trRenderFilters() {
     <div id="trn-centre-legend" class="sd-near" ${tr.showCentres ? "" : "hidden"}></div>`;
   trRenderCentreLegend();
   // number of stations for the current filters, next to the Filter button
-  $("trn-count").innerHTML = cnt && stations ? `<b>${cnt.total.toLocaleString()}</b> station${cnt.total === 1 ? "" : "s"} in view${cnt.hidden_modes.length ? ` <span title="Zoom in to see ${cnt.hidden_modes.map(m => trName[m]).join(', ')}" style="cursor:help">ⓘ</span>` : ""}` : "";
+  $("trn-count").innerHTML = cnt && stations ? `<b>${cnt.total.toLocaleString(NUM)}</b> station${cnt.total === 1 ? "" : "s"} in view${cnt.hidden_modes.length ? ` <span title="Zoom in to see ${cnt.hidden_modes.map(m => trName[m]).join(', ')}" style="cursor:help">ⓘ</span>` : ""}` : "";
 }
 
 // ---- number of stations in the visible map area (for the current filters)
@@ -396,7 +400,7 @@ async function trLookup(latlng) {
         return `<div class="hit">
           <div class="top">${esc(st.name)}</div>
           <div class="tot"><b>${perH(st.per_hour)}</b> departures per hour · one every <b>${ivl(st.interval_min)}</b>
-            <small>(${st.departures.toLocaleString()} in 12 h)</small></div>
+            <small>(${st.departures.toLocaleString(NUM)} in 12 h)</small></div>
           <div class="qmix">${st.modes.map(m => `<div style="width:${m.departures / tot * 100}%;background:${trColor[m.cat]}" title="${esc(trName[m.cat])}"></div>`).join("")}</div>
           ${st.modes.map(m => `<div class="md">${sw(m.cat)}${trName[m.cat]} · ${perH(m.per_hour)} per hour · every ${ivl(m.interval_min)}</div>`).join("")}
           <div class="more"><button type="button" class="lib-btn" data-details="${i}">Details ›</button></div>
@@ -429,9 +433,9 @@ async function trReach(latlng, seq) {
     L.geoJSON(d.geometry, { interactive: false, style: { color: "#e11d48", weight: 2, fillColor: "#e11d48", fillOpacity: 0.22 } }).addTo(reachMark);
     $("tr-info").innerHTML = `<table class="reach">
       <tr><td>Time</td><td><b>${d.minutes}</b> min · ${d.access === "bike" ? "Bike" : "Walk"}</td></tr>
-      <tr><td>Area</td><td><b>${d.area_km2.toLocaleString()}</b> km²</td></tr>
-      <tr><td>Population</td><td><b>${d.population == null ? dash : d.population.toLocaleString()}</b></td></tr>
-      <tr><td>Stops</td><td><b>${d.stops.toLocaleString()}</b></td></tr></table>`;
+      <tr><td>Area</td><td><b>${d.area_km2.toLocaleString(NUM)}</b> km²</td></tr>
+      <tr><td>Population</td><td><b>${d.population == null ? dash : d.population.toLocaleString(NUM)}</b></td></tr>
+      <tr><td>Stops</td><td><b>${d.stops.toLocaleString(NUM)}</b></td></tr></table>`;
   } catch (err) {
     if (seq === tr.seq) $("tr-info").innerHTML = `<div class="empty" style="color:#b91c1c">${esc(err.message)}</div>`;
   }
@@ -461,13 +465,13 @@ async function trSupply() {
     const top = d.modes[0]?.departures || 1, row = (l, v, hint = "") => `<tr${hint ? ` title="${esc(hint)}"` : ""}><td>${l}</td><td><b>${v}</b></td></tr>`;
     $("tr-info").innerHTML = `<div class="md" style="margin-bottom:4px">${esc(areaName().replace(/^the v/, "V"))} · ${dayLabel()}, 07–19 h</div>
       <table class="reach">
-        ${row("Departures", d.departures.toLocaleString())}
+        ${row("Departures", d.departures.toLocaleString(NUM))}
         ${row("Per km²", d.area_km2 ? fmt(d.departures / d.area_km2, 1) : dash, `${fmt(d.area_km2, 2)} km²`)}
-        ${row("Per 1,000 people", d.population ? fmt(d.departures * 1000 / d.population, 1) : dash, d.population ? d.population.toLocaleString() + " inhabitants" : "No population data here")}
-        ${row("Stations", d.stations.toLocaleString())}</table>
+        ${row("Per 1.000 people", d.population ? fmt(d.departures * 1000 / d.population, 1) : dash, d.population ? d.population.toLocaleString(NUM) + " inhabitants" : "No population data here")}
+        ${row("Stations", d.stations.toLocaleString(NUM))}</table>
       ${d.modes.map(m => `<div class="md" style="display:flex;align-items:center;gap:6px;margin-top:4px">
         <span style="flex:none;width:${Math.max(3, m.departures / top * 90)}px;height:6px;border-radius:3px;background:${trColor[m.cat]}"></span>
-        ${trName[m.cat]} · ${m.departures.toLocaleString()}</div>`).join("")}`;
+        ${trName[m.cat]} · ${m.departures.toLocaleString(NUM)}</div>`).join("")}`;
   } catch (err) {
     if (err.name !== "AbortError") $("tr-info").innerHTML = `<div class="empty" style="color:#b91c1c">${esc(err.message)}</div>`;
   }

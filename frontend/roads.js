@@ -35,7 +35,7 @@ function showRoads() {
   $("res-list").innerHTML = `<div class="pop-stats">
     <h4>Ratio</h4>
     ${row("Per km²", num(d.area_km2 ? lane / d.area_km2 : null, 1, " lane-km"), `Area ${fmt(d.area_km2, 2)} km²`)}
-    ${row("Per person", d.population ? num(lane * 1000 / d.population, 1, " m") : dash, d.population ? `${d.population.toLocaleString()} inhabitants` : "No population data here")}
+    ${row("Per person", d.population ? num(lane * 1000 / d.population, 1, " m") : dash, d.population ? `${d.population.toLocaleString(NUM)} inhabitants` : "No population data here")}
     ${row("Road length", num(km, 1, " km"))}
     <h4>Types <span class="rd-all"><a data-rd="cars">cars</a> <a data-rd="all">all</a> <a data-rd="none">none</a></span></h4>
     ${ROAD_TYPES.map(([id, name]) => `<label class="row rd-type${roadSel.has(id) ? "" : " off"}" title="${esc(ROAD_HINT[id])}">

@@ -105,7 +105,7 @@ def main(feed, db):
     edge_lvl = {}       # (station a, station b, mode, centre level) -> [wd a->b, wd b->a, sa a->b, sa b->a, su a->b, su b->a]   (a < b)
     for n, (cat, short, m, st) in enumerate(feed.trip_stops()):
         if n % 20000 == 0:
-            progress(90 * min(1, n / max(1, len(trips))), f"{n:,} trips")
+            progress(90 * min(1, n / max(1, len(trips))), f"{n:,} trips".replace(",", "."))
         if len(st) < 2:
             continue
         sids = [s[0] for s in st]

@@ -39,7 +39,7 @@ function luList(values, truncated) {
   $("lu-body").innerHTML = `<div class="head"><span>In view</span><span><a data-a="all">all</a><a data-a="none">none</a></span></div>`
     + (values.map(v => `<div class="lu-row${lu.off.has(v.value) ? " off" : ""}" data-v="${esc(v.value)}">
         <input type="checkbox" ${lu.off.has(v.value) ? "" : "checked"} tabindex="-1"><i class="sw" style="background:${luColor(v.value)}"></i>
-        <span>${esc(v.value)}</span><span class="a">${v.km2.toLocaleString(undefined, { maximumFractionDigits: v.km2 < 10 ? 2 : 1 })} km² · ${Math.round(v.km2 / total * 100)} %</span>
+        <span>${esc(v.value)}</span><span class="a">${v.km2.toLocaleString(NUM, { maximumFractionDigits: v.km2 < 10 ? 2 : 1 })} km² · ${Math.round(v.km2 / total * 100)} %</span>
         <div class="bar"><i style="width:${v.km2 / top * 100}%;background:${luColor(v.value)}"></i></div></div>`).join("") || '<div class="empty">No landuse here</div>')
     + (truncated ? '<div class="empty">Only the biggest areas are drawn – zoom in.</div>' : "")
     + `<label class="op">Strength <input type="range" id="lu-op" min="20" max="100" step="5" value="${Math.round(lu.opacity * 100)}"></label>`;

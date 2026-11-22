@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OSM Tag Search</title>
+  <title>Spatial Analytics</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <!-- vector maps (black & white / dark themes) -->
@@ -21,7 +22,7 @@
 <body>
   <div id="app">
     <aside id="sidebar">
-      <div id="brand"><span>OSM Tag Search</span>
+      <div id="brand"><span><img src="/static/icon.svg" alt="" width="22" height="22">Spatial Analytics</span>
         <button type="button" id="sb-close" class="sb-btn" title="Hide sidebar (Ctrl+B)" aria-label="Hide sidebar">‹</button>
       </div>
       <form id="form" autocomplete="off">
@@ -195,11 +196,12 @@
       <button type="button" id="sb-open" title="Show sidebar (Ctrl+B)" aria-label="Show sidebar">›</button>
       <div id="map"></div>
       <!-- tools: a slim bar on top of the map (takes no space from it) -->
-      <div id="notice" hidden><span></span><button type="button">Settings</button></div>
+      <div id="notice" role="status" hidden></div>
       <nav id="toolbar" aria-label="Tools">
         <button type="button" id="pop-btn" title="Inhabitants of an area">Population</button>
         <button type="button" id="road-btn" title="Lane-km of an area">Roads</button>
-        <button type="button" id="amen-btn" title="Shops, services, leisure: what a place offers">Amenities</button>
+        <button type="button" id="amen-btn" title="What is right at a place: shops, health, dining … within 400 m">Amenities</button>
+        <button type="button" id="walk-btn" title="How well a place is supplied on foot: Walk Score, 15-minute city …">Walkability</button>
         <button type="button" id="trn-btn" title="Public transport" aria-expanded="false">Transit</button>
         <button type="button" id="lu-btn" title="Land use: OSM tags" aria-expanded="false">Landuse</button>
         <button type="button" id="insp-btn" title="Click the map: everything at that point" aria-expanded="false">Point info</button>

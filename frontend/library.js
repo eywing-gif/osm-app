@@ -45,7 +45,7 @@ addEventListener("resize", () => applySidebar(false));   // keep the width withi
 // ---------- tag library ----------
 const lib = { open: false, key: null, q: "", page: 1, hasMore: false, loading: false, token: 0, ctl: null,
               sort: store.get("libSort", "name"), documented: store.get("libDoc", true) };
-const fmtCount = n => new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(n);
+const fmtCount = n => new Intl.NumberFormat(NUM, { notation: "compact", maximumFractionDigits: 1 }).format(n);
 
 // one tool open at a time (Point info, Transit, Landuse, Tag library): opening one closes the others
 const TOOL_CLOSERS = { inspect: () => setInspect(false), transit: () => setTransit(false), landuse: () => setLanduse(false), library: () => closeLibrary() };
@@ -88,7 +88,7 @@ function libHeader(total) {
   $("lib-back").hidden = !lib.key;
   $("lib-title").textContent = lib.key ? lib.key : "Tag library";
   const what = lib.key ? (total === 1 ? "value" : "values") : (total === 1 ? "key" : "keys");
-  $("lib-sub").textContent = (total != null ? `${total.toLocaleString()} ${what} · ` : "") + (online ? "worldwide (taginfo)" : "your local data");
+  $("lib-sub").textContent = (total != null ? `${total.toLocaleString(NUM)} ${what} · ` : "") + (online ? "worldwide (taginfo)" : "your local data");
   $("lib-q").placeholder = lib.key ? `Filter values of ${lib.key}…` : "Filter keys…";
   $("lib-doc-row").hidden = !online;
 }
@@ -124,7 +124,7 @@ async function loadLibrary(reset) {
              <span class="lc">${fmtCount(it.count)}</span></div>`
         : `<div class="lr" data-name="${esc(it.name)}"><div class="lmain">
              <div class="ln">${esc(it.name)}</div>
-             ${it.values ? `<div class="ld">${it.values.toLocaleString()} ${it.values === 1 ? "value" : "values"}</div>` : ""}</div>
+             ${it.values ? `<div class="ld">${it.values.toLocaleString(NUM)} ${it.values === 1 ? "value" : "values"}</div>` : ""}</div>
              <span class="lc">${fmtCount(it.count)}</span><span class="chev">›</span></div>`);
     }
     list.insertAdjacentHTML("beforeend", rows.join(""));

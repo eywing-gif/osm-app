@@ -14,7 +14,7 @@ import psycopg
 ROOT = Path(__file__).resolve().parent.parent
 DATA = Path(os.environ.get("OSMAPP_DATA") or ROOT / "data")          # downloads, state, job logs
 PREFIX = os.environ.get("OSMAPP_DB_PREFIX", "")                      # lets a test run use its own databases
-USER_AGENT = "osm-tag-search/0.4 (personal desktop app)"
+USER_AGENT = "spatial-analytics/0.9 (personal desktop app)"
 STATE_FILE = DATA / "state.json"
 
 # ---- the databases: osm (map data), population (grid tables pop_<id>), transit_<feed id> (one per timetable feed)

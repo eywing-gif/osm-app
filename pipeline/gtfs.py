@@ -142,7 +142,7 @@ class Feed:
         seen = set()
         for trip_id, grp in groupby(self._stop_times(), key=lambda p: p[0]):
             if trip_id in seen:
-                raise SystemExit("stop_times.txt is not grouped by trip – not supported")
+                raise NotGrouped("stop_times.txt is not grouped by trip")
             seen.add(trip_id)
             info = self.trips.get(trip_id)
             if info is None:
@@ -196,7 +196,7 @@ def build_links(feed: Feed, db: str):
     links = Links()
     for n, (cat, short, mask, stops) in enumerate(feed.trip_stops()):
         if n % 20000 == 0:
-            progress(100 * min(1, n / max(1, len(feed.trips))), f"{n:,} trips")
+            progress(100 * min(1, n / max(1, len(feed.trips))), f"{n:,} trips".replace(",", "."))
         links.add(cat, short, mask, stops)
     with psycopg.connect(dsn(db)) as conn:
         links.write(conn, feed.coord, feed.names)
@@ -214,7 +214,7 @@ def build(feed: Feed, db: str):
         rows += len(stops)
         links.add(cat, short, mask, stops)
         if n % 20000 == 0:
-            progress(100 * min(1, n / max(1, len(feed.trips))), f"{n:,} trips")
+            progress(100 * min(1, n / max(1, len(feed.trips))), f"{n:,} trips".replace(",", "."))
         for sid, _, dep in stops[:-1]:                 # the last stop is not a departure
             if dep is not None and WINDOW[0] <= dep < WINDOW[1]:
                 d = departures[(sid, cat)]
@@ -263,3 +263,94 @@ def build(feed: Feed, db: str):
         conn.commit()
         conn.execute("ANALYZE")
         log(f"{conn.execute('SELECT count(*) FROM transit_edge').fetchone()[0]:,} segments stored")
+
+
+# ---------- several feeds as one (catalog: parts) ----------
+MERGED = ("agency.txt", "routes.txt", "trips.txt", "stops.txt", "stop_times.txt", "calendar.txt", "calendar_dates.txt")
+
+
+def _prefixed(col: str) -> bool:
+    return col == "parent_station" or col.endswith("_id") and col != "direction_id"
+
+
+def merge(parts: dict, dest):
+    """Write one GTFS zip from several ({prefix: zip path}): every id gets '<prefix>:' so the feeds do not clash.
+    Only the files Feed reads; columns are the union of all parts. Prefix None: ids stay (regroup()).
+    stop_times.txt of a part that is not grouped by trip is sorted (Feed.trip_stops() needs each trip in one run)."""
+    import io
+    tmp = dest.with_name(dest.name + ".part")
+    zips = {k: zipfile.ZipFile(p) for k, p in parts.items()}
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as out:
+        for n, name in enumerate(MERGED):
+            progress(100 * n / len(MERGED), name)
+            heads = {}
+            for k, z in zips.items():
+                if name in z.namelist():
+                    with z.open(name) as f:
+                        heads[k] = next(csv.reader([f.readline().decode("utf-8-sig")]), [])
+            if not heads:
+                continue
+            cols = list(dict.fromkeys(c.strip() for h in heads.values() for c in h))
+            with out.open(name, "w", force_zip64=True) as raw, io.TextIOWrapper(raw, "utf-8", newline="") as txt:
+                w = csv.writer(txt, lineterminator="\n")
+                w.writerow(cols)
+                for j, (k, head) in enumerate(heads.items()):
+                    progress(100 * (n + j / len(heads)) / len(MERGED), f"{name} · {k}")
+                    head = [c.strip() for c in head]
+                    pos = [head.index(c) if c in head else None for c in cols]
+                    pre = [_prefixed(c) for c in cols]
+                    rows = _rows(zips[k], name)
+                    if name == "stop_times.txt" and (bad := _scattered(zips[k], head.index("trip_id"))):
+                        log(f"{k or 'feed'}: {len(bad):,} trips with their stop times not in one run – regrouped")
+                        rows = _by_trip(rows, head.index("trip_id"), bad)
+                    for r in rows:
+                        v = [r[i] if i is not None and i < len(r) else "" for i in pos]
+                        w.writerow([f"{k}:{x}" if p and k and x else x for x, p in zip(v, pre)])
+    for z in zips.values():
+        z.close()
+    tmp.rename(dest)
+
+
+def _rows(z, name):
+    with z.open(name) as f:
+        rows = csv.reader(l.decode("utf-8-sig") for l in f)
+        next(rows, None)
+        yield from (r for r in rows if r)
+
+
+def _scattered(z, trip_col: int) -> set:
+    """Trips whose stop times are not in one run (a pass over the trip column; usually none)."""
+    seen, bad, last = set(), set(), None
+    for r in _rows(z, "stop_times.txt"):
+        t = r[trip_col]
+        if t != last:
+            if t in seen:
+                bad.add(t)
+            seen.add(t)
+            last = t
+    return bad
+
+
+def _by_trip(rows, trip_col: int, bad: set):
+    """The rows with each trip in one run. Only the scattered trips are held in memory (all of a feed would need many GB)."""
+    held = {}
+    for r in rows:
+        if r[trip_col] in bad:
+            held.setdefault(r[trip_col], []).append(r)
+        else:
+            yield r
+    for grp in held.values():
+        yield from grp
+
+
+class NotGrouped(SystemExit):
+    pass
+
+
+def regroup(path):
+    """Rewrite a feed whose stop times are not grouped by trip (pipeline.transit does this when Feed refuses it)."""
+    from pathlib import Path
+    path = Path(path)
+    out = path.with_name(path.stem + "_sorted.zip")
+    merge({None: path}, out)
+    out.replace(path)

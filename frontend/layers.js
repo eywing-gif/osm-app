@@ -89,9 +89,10 @@ const GRID_OPTIONS = {
   roads: () => [0, 1000, 2000, 5000, 10000],           // the roads are counted per 1 km square
   transit: () => [0, 500, 1000, 2000, 5000, 10000],    // stations are points: smaller squares are mostly empty
   amenities: () => [0, 100, 200, 500, 1000, 2000, 5000],   // the score is computed for each square: from 100 m
+  walk: () => [0, 100, 200, 500, 1000, 2000, 5000],
 };
 const sizeName = v => v ? (v >= 1000 ? v / 1000 + " km" : v + " m") : "Auto";
-const GRID_BASE = { roads: 1000, transit: 500, amenities: 100 };       // smallest square (population: the cell of its data)
+const GRID_BASE = { roads: 1000, transit: 500, amenities: 100, walk: 100 };       // smallest square (population: the cell of its data)
 const gridSizes = store.get("gridSizes", {});
 const gridSizeFor = tool => GRID_OPTIONS[tool]().includes(gridSizes[tool]) ? gridSizes[tool] : 0;
 let gridTool = "population";                           // the grid the footer choice is for (updateLegend)
@@ -146,7 +147,7 @@ const GridCellLayer = L.GridLayer.extend({
 const PopDensityLayer = opts => new GridCellLayer({ ...opts, spec: {
   url: (z, x, y) => `${API}/density/${z}/${x}/${y}?v=${dataInfo.population_id}&size=${gridSizeFor("population")}`,
   t: popT, color: popColor, show: popShown,
-  text: (d, len) => popLabels && (len >= 44 ? d.toLocaleString() : popNice(d)),
+  text: (d, len) => popLabels && (len >= 44 ? d.toLocaleString(NUM) : popNice(d)),
 } });
 
 // built-up share of a cell (GHS-BUILT-S), 0 – 100 %. Most cells are only a few per cent: the scale follows the square root,
@@ -306,7 +307,7 @@ const slope = overlays["Slope (steepness)"], popLayer = overlays[POPULATION];
 // scale: the palette over the chosen range, with the densities at fixed positions below
 const popNice = d => {
   const v = d >= 1000 ? d / 1000 : d, r = v >= 100 ? Math.round(v) : Number(v.toPrecision(2));
-  return r.toLocaleString(undefined, { maximumFractionDigits: 1 }) + (d >= 1000 ? "k" : "");
+  return r.toLocaleString(NUM, { maximumFractionDigits: 1 }) + (d >= 1000 ? "k" : "");
 };
 function renderPopLegend() {
   const stops = Array.from({ length: 13 }, (_, i) => `${popColorAt(i / 12)} ${Math.round(i / 12 * 100)}%`);
@@ -399,15 +400,66 @@ let popTimer;
 for (const id of ["pop-min", "pop-max"]) $(id).addEventListener("input", () => { clearTimeout(popTimer); popTimer = setTimeout(applyPopRange, 350); });
 $("pop-reset").addEventListener("click", () => { $("pop-min").value = $("pop-max").value = ""; applyPopRange(); });
 document.addEventListener("click", e => { if (!e.target.closest("#pop-filter-wrap")) showPopFilter(false); });
-// a layer that needs a data set which is not installed: say so (instead of an empty map)
-const needsData = { "Built-up area (GHS)": () => dataInfo.built_id, "Non-residential built-up (GHS)": () => dataInfo.built_id, [POPULATION]: () => dataInfo.population_id,
-  [PER_PERSON]: () => dataInfo.built_id && dataInfo.population_id };
-function checkLayerData() {
-  const missing = Object.keys(needsData).filter(n => map.hasLayer(overlays[n]) && !needsData[n]());
-  $("notice").hidden = !missing.length;
-  if (missing.length) $("notice").firstElementChild.textContent = `No data for "${missing[0]}" – `;
+// ---------- hints: what is missing or may be shown wrong because data is not there (yellow, with a way to Settings) ----------
+const needsData = { "Built-up area (GHS)": "built", "Non-residential built-up (GHS)": "built", [POPULATION]: "pop", [PER_PERSON]: "built pop" };
+// share of the visible map inside a lon/lat box (1 without a box: whole world / country not known)
+function viewShare(b) {
+  if (!b) return 1;
+  const v = map.getBounds(), w = Math.max(0, Math.min(v.getEast(), b[2]) - Math.max(v.getWest(), b[0])),
+    h = Math.max(0, Math.min(v.getNorth(), b[3]) - Math.max(v.getSouth(), b[1]));
+  return w * h / Math.max(1e-9, (v.getEast() - v.getWest()) * (v.getNorth() - v.getSouth()));
 }
-$("notice").lastElementChild.addEventListener("click", () => { $("settings-btn").click(); });
+const NEED = {        // [text, Settings tab] for each kind of data, or nothing when it is fine
+  osm: () => !dataInfo.osm?.length ? ["no map data", "osm"] : viewShare(dataInfo.bbox) < 0.05 ? ["no map data here", "osm"]
+    : viewShare(dataInfo.bbox) < 0.5 ? ["map data only partly here", "osm"] : null,
+  analyses: () => NEED.osm() || (!dataInfo.roads ? ["analyses missing (Prepare analyses)", "osm"] : null),
+  amen: () => NEED.analyses() || (dataInfo.amenities_outdated ? ["analyses outdated (Prepare analyses)", "osm"] : null),
+  pop: () => !dataInfo.population_id ? ["no population data", "population"] : viewShare(dataInfo.pop_bbox) < 0.05 ? ["no population data here", "population"]
+    : viewShare(dataInfo.pop_bbox) < 0.5 ? ["population only partly here", "population"] : null,
+  built: () => !dataInfo.built_id ? ["no built-up data", "built"] : viewShare(dataInfo.built_bbox) < 0.05 ? ["no built-up data here", "built"] : null,
+  transit: () => {
+    if (!dataInfo.transit_name) return ["no timetable", "transit"];
+    if (viewShare(dataInfo.transit_bbox) < 0.05) return ["no timetable here", "transit"];
+    if (dataInfo.transit_only && !(dataInfo.transit_full || []).some(b => viewShare(b) > 0.3)) return [`timetable has ${dataInfo.transit_only} only – no buses, trams, metro`, "transit"];
+    if (dataInfo.transit_outdated) return ["timetable outdated (Update)", "transit"];
+    return null;
+  },
+};
+// the tool in use and what it needs
+function dataNeeds() {
+  if (!("osm" in dataInfo)) return [];          // not loaded yet
+  const out = [];
+  const add = (who, kinds) => kinds.split(" ").forEach(k => { const m = NEED[k](); if (m) out.push([who, ...m]); });
+  for (const n of Object.keys(needsData)) if (map.hasLayer(overlays[n])) add(n, needsData[n]);
+  const q = $("q")?.value || "", open = !/\b(trn|insp|lib|lu)-open\b/.test($("sidebar").className);
+  const trOn = typeof tr !== "undefined" && tr.on;
+  if (trOn) add("Transit", "transit");
+  else if (open && typeof isWalkQuery === "function" && isWalkQuery(q)) add("Walkability", "amen");
+  else if (open && typeof isAmenityQuery === "function" && isAmenityQuery(q)) add("Amenities", "amen");
+  else if (open && typeof isRoadsQuery === "function" && isRoadsQuery(q)) add("Roads", "analyses");
+  else if (open && typeof isPopulationQuery === "function" && isPopulationQuery(q)) add("Population", "pop");
+  if (typeof splitView !== "undefined" && splitView !== "off") {       // split view: its statistic, and inhabitants for "per person"
+    const s = splitSubject, who = SPLIT + ": " + subject().title;
+    add(who, { roads: "analyses", amenities: "amen", walk: "amen", transit: "transit", population: "pop" }[s]);
+    if (mode() === "person" || splitView !== "grid" && s === "population") add(who, "pop");
+  }
+  const seen = new Set();
+  return out.filter(([, t]) => !seen.has(t) && seen.add(t));
+}
+let noticeKey = "";
+function checkLayerData() {
+  const list = dataNeeds(), key = JSON.stringify(list);
+  if (key === noticeKey) return;
+  noticeKey = key;
+  $("notice").hidden = !list.length;
+  $("notice").innerHTML = list.slice(0, 3).map(([who, text, tab]) =>
+    `<div><span><b>${esc(who)}</b>: ${esc(text)}</span><button type="button" data-tab="${tab}">Settings</button></div>`).join("");
+}
+$("notice").addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) window.openSettings ? openSettings(b.dataset.tab) : $("settings-btn").click(); });
+map.on("moveend", () => checkLayerData());
+// tools are switched in many places: check again after each click / search (cheap, the box only changes when the list does)
+document.addEventListener("click", () => setTimeout(checkLayerData, 50), true);
+document.addEventListener("keyup", e => { if (e.key === "Enter") setTimeout(checkLayerData, 50); }, true);
 const saveLayers = () => store.set("overlays", Object.keys(overlays).filter(n => n !== MARKERS && map.hasLayer(overlays[n])));
 map.on("baselayerchange", e => store.set("theme", e.name));
 map.on("overlayadd overlayremove", e => {

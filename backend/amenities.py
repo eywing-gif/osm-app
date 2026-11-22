@@ -9,6 +9,8 @@ Scores of a location (distances: straight line × DETOUR = way on foot, WALK_KMH
                  routed; here 5, straight × detour, at most 60 min).
   diversity      evenness (Shannon / Pielou, 0–1) of the groups within 10 minutes.
   local supply   BBSR "Nahversorgung": supermarket, pharmacy, doctor, school, public transport stop within 1 km (straight).
+  attractiveness per field (daily needs, health, dining …): the places within 400 m (straight), each type weighted by
+                 how often people go there, every further place of a type worth less (amenity_catalog.ATTRACT); no distance decay.
 """
 import json
 import math
@@ -21,7 +23,7 @@ from pydantic import BaseModel
 from scipy.spatial import cKDTree
 
 from . import population, roads
-from .amenity_catalog import GREEN, GROUP_IDS, GROUPS, catalog
+from .amenity_catalog import ATTRACT, ATTRACT_M, GREEN, GROUP_IDS, GROUPS, attract_catalog, attract_max, attract_weights, catalog
 from .common import db, transit_db
 
 router = APIRouter(prefix="/amenities")
@@ -111,6 +113,46 @@ class Places:
         return np.asarray(tree.query_ball_point(pts * self.k, walk_m / DETOUR, return_length=True))
 
 
+def saturate(n, w: float, r: float):
+    """Points of n places of one type: w + r·w + r²·w + … (n terms) = w · (1 − rⁿ) / (1 − r)."""
+    return w * (1 - r ** np.asarray(n, dtype=float)) / (1 - r)
+
+
+def attract(pts: np.ndarray, metric: str) -> np.ndarray:
+    """Attractiveness index 0–100 of many locations (EPSG:3857): per type the places within ATTRACT_M, saturating
+    (saturate); green spaces once per type, reached at their edge (amenity_green_pt); share of the field's maximum."""
+    if not len(pts):
+        return np.zeros(0)
+    w = attract_weights(metric)
+    k = math.cos(math.atan(math.sinh(pts[:, 1].mean() / 6378137)))        # EPSG:3857 → metres
+    m = ATTRACT_M / k + 1
+    box = (pts[:, 0].min() - m, pts[:, 1].min() - m, pts[:, 0].max() + m, pts[:, 1].max() + m)
+    groups = sorted({g for g, _ in w if g != GREEN})
+    green = {s: v for (g, s), v in w.items() if g == GREEN}
+    with db() as conn:
+        rows = conn.execute("SELECT g, s, ST_X(way), ST_Y(way) FROM amenity_poi WHERE way && ST_MakeEnvelope(%s, %s, %s, %s, 3857) "
+                            "AND g = ANY(%s)", (*box, groups)).fetchall() if groups else []
+        edges = conn.execute("SELECT s, ST_X(way), ST_Y(way) FROM amenity_green_pt WHERE way && ST_MakeEnvelope(%s, %s, %s, %s, 3857) "
+                             "AND s = ANY(%s)", (*box, list(green))).fetchall() if green else []
+    out = np.zeros(len(pts))
+    by_type: dict = {}
+    for g, s, x, y in rows:
+        if (g, s) in w:
+            by_type.setdefault((g, s), []).append((x, y))
+    for key, xy in by_type.items():
+        n = cKDTree(np.array(xy, dtype=float) * k).query_ball_point(pts * k, ATTRACT_M, return_length=True)
+        out += saturate(n, *w[key])
+    for s, (wt, _) in green.items():          # a park counts once, however long its edge
+        e = np.array([r[1:3] for r in edges if r[0] == s], dtype=float)
+        if len(e):
+            d, _ = cKDTree(e * k).query(pts * k, k=1, distance_upper_bound=ATTRACT_M)
+            out += wt * np.isfinite(d)
+    return 100 * out / attract_max(metric)
+
+
+ATTRACT_FIELDS = [("a_supply", "Retail, all")] + [(a["id"], a["name"]) for a in ATTRACT]
+
+
 def scores(pl: Places, pts: np.ndarray) -> dict:
     """The scores for many locations at once (pts: EPSG:3857 x / y)."""
     n = len(pts)
@@ -179,9 +221,11 @@ def at(lon: float, lat: float):
         groups[gi]["points"] = round(float(g["weight"] * (decay(d[0]) * np.array(g["shares"])).sum()), 2)
     local = local_supply(pl, pt, lon, lat)
     sc = float(s["score"][0])
+    att = [{"id": m, "name": n, "value": round(float(attract(pt, m)[0]))} for m, n in ATTRACT_FIELDS]
     return {"score": round(sc), "grade": grade(sc), "within15": int(s["within15"][0]), "groups_total": len(GROUPS),
             "proximity_min": round(float(s["proximity_min"][0]), 1), "diversity": round(float(diversity(np.array([counts10]))[0]), 2),
-            "local": local, "groups": groups, "weight_total": float(WEIGHTS.sum())}
+            "local": local, "groups": groups, "weight_total": float(WEIGHTS.sum()),
+            "attract": att, "attract_m": ATTRACT_M}
 
 
 def local_supply(pl: Places, pt, lon, lat) -> list[dict]:
@@ -209,6 +253,17 @@ def _need():
             raise HTTPException(409, "Amenities not prepared – Settings → Map → Prepare analyses")
 
 
+def outdated() -> bool:
+    """Prepared with older groups / tags (e.g. before zoo and viewpoint were their own types)."""
+    from .amenity_catalog import version
+    try:
+        with db() as conn:
+            c = conn.execute("SELECT obj_description('amenity_poi'::regclass, 'pg_class')").fetchone()[0]
+    except psycopg.Error:
+        return False
+    return c != f"catalog {version()}"
+
+
 def prepared() -> bool:
     try:
         _need()
@@ -218,7 +273,8 @@ def prepared() -> bool:
 
 
 # ---------- map grid: score per square (from 100 m) or the places in each square ----------
-METRICS = ("score", "within15", "proximity", "diversity", "local", "total", "area", "person")
+ATTRACT_METRICS = ("a_supply",) + tuple(a["id"] for a in ATTRACT)
+METRICS = ("score", "within15", "proximity", "diversity", "local", "total", "area", "person") + ATTRACT_METRICS
 CELLS_QUERY = """
 SELECT gx, gy FROM (SELECT ST_Envelope(ST_Transform(ST_MakeEnvelope(%(minx)s, %(miny)s, %(maxx)s, %(maxy)s, 3857), %(srid)s)) AS b) e,
   generate_series(floor(ST_XMin(b) / %(size)s)::int, floor(ST_XMax(b) / %(size)s)::int) gx,
@@ -244,6 +300,11 @@ def grid_json(z: int, x: int, y: int, metric: str, groups: tuple, want: int, sri
         keys = conn.execute(CELLS_QUERY, p).fetchall()
         pts = conn.execute(roads.CENTRES_QUERY, dict(size=size, srid=srid, xs=[k[0] for k in keys], ys=[k[1] for k in keys])).fetchall()
     xy = np.array(pts, dtype=float).reshape(-1, 2)
+    if metric in ATTRACT_METRICS:
+        vals = attract(xy, metric)
+        rows = [(px, py, v) for (px, py), v in zip(pts, vals.tolist()) if v > 0]
+        with db() as conn:
+            return population.tile_json(conn, rows, srid, box, res, size, lambda v: round(v))
     pl = Places(box["minx"], box["miny"], box["maxx"], box["maxy"])
     if metric == "diversity":
         vals = pl.diversity(xy) * 100                       # per cent, so the squares show whole numbers
@@ -336,6 +397,7 @@ def stats(req: Area):
         else:
             local[label] = 0.0
     mean = float((w * sc["score"]).sum() / w.sum())
+    out["attract"] = [{"id": m, "name": n, "value": round(float((w * attract(pts, m)).sum() / w.sum()))} for m, n in ATTRACT_FIELDS]
     out["population"] = round(float(w.sum()))
     out["people"] = {"score": round(mean), "grade": grade(mean), "within15": round(float((w * sc["within15"]).sum() / w.sum()), 1),
                      "proximity_min": round(float((w * sc["proximity_min"]).sum() / w.sum()), 1),
@@ -379,7 +441,7 @@ def points(minx: float, miny: float, maxx: float, maxy: float, groups: str = "")
 
 @router.get("/catalog")
 def get_catalog():
-    return {"groups": catalog(), "walk_kmh": population.WALK_KMH, "detour": DETOUR, "full_m": FULL_M, "zero_m": ZERO_M,
+    return {"groups": catalog(), "attract": attract_catalog(), "attract_m": ATTRACT_M, "walk_kmh": population.WALK_KMH, "detour": DETOUR, "full_m": FULL_M, "zero_m": ZERO_M,
             "grades": GRADES, "prepared": prepared()}
 
 

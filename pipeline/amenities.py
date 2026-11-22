@@ -7,7 +7,7 @@ Groups and tags: backend/amenity_catalog.py. Made by the map import and by Setti
 """
 import psycopg
 
-from backend.amenity_catalog import GREEN, GREEN_MIN_M2, code_sql
+from backend.amenity_catalog import GREEN, GREEN_MIN_M2, code_sql, version
 from backend.common import DB_OSM, dsn
 from .util import log, progress
 
@@ -42,6 +42,7 @@ def main(db: str = DB_OSM):
             conn.execute(f"DROP TABLE IF EXISTS {t}")
             conn.execute(f"ALTER TABLE {t}_new RENAME TO {t}")
             conn.execute(f"ANALYZE {t}")
+        conn.execute(f"COMMENT ON TABLE amenity_poi IS 'catalog {version()}'")     # backend.amenities.outdated()
         n = conn.execute("SELECT count(*) FROM amenity_poi").fetchone()[0]
         e = conn.execute("SELECT count(*) FROM amenity_green_pt").fetchone()[0]
     log(f"{n:,} amenities, {e:,} points along green spaces (group {GREEN})")

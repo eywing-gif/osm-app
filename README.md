@@ -1,4 +1,4 @@
-# OSM Tag Search
+# Spatial Analytics
 
 Desktop app: search OpenStreetMap tags, point info, population (grid), roads (lane-km), amenities (rating of a place), public transport (lines, reach, supply), land use (OSM, CORINE, built-up).
 
@@ -21,7 +21,7 @@ The script asks for your password once and then does everything itself: installs
 the Python environment (`venv/`) and a menu entry. If something goes wrong it says what – fix it and simply
 run `sh install.sh` again (also the cure after a big system update).
 
-**Start:** application menu → *OSM Tag Search* (or `python3 ~/osm-app/app.py`).
+**Start:** application menu → *Spatial Analytics* (or `python3 ~/osm-app/app.py`).
 **First start:** ⚙ → download a map region, population grid, timetables.
 
 ## Uninstall

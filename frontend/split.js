@@ -8,8 +8,19 @@ const SPLIT_LEVELS = { 4: ["State", "admin_level 4: Bundesland"], 6: ["County", 
 const SPLITS = [["grid", "Grid", "Squares – size in the footer"], ...Object.entries(SPLIT_LEVELS).map(([l, [n, h]]) => [l, n, h])];
 const SPLIT_SCALE = ["#fff7ec", "#fdd49e", "#fc8d59", "#d7301f", "#7f0000", "#2b0000"];
 const SPLIT_MODES = { score: "Walk Score method", within15: "15-minute city", proximity: "Proximity time", diversity: "Variety",
-  local: "Local supply (BBSR)", total: "Total", area: "per km²", person: "per person" };
+  local: "Local supply (BBSR)", total: "Total", area: "per km²", person: "per person",
+  a_supply: "Retail, all", a_daily: "Daily needs", a_periodic: "Periodic needs", a_episodic: "Episodic needs",
+  a_health: "Health", a_education: "Education", a_culture: "Culture", a_sights: "Sights", a_food: "Dining",
+  a_recreation: "Recreation & sport", a_third: "Third places" };
+const WALK_MODES = ["score", "within15", "proximity", "diversity", "local"];
+const amenGroupsParam = () => typeof amenSel === "undefined" ? "" : [...amenSel].join(",");   // amenities.js loads after this file
+const ATTRACT_MODES = ["a_supply", "a_daily", "a_periodic", "a_episodic", "a_health", "a_education", "a_culture", "a_sights",
+  "a_food", "a_recreation", "a_third"];   // backend ATTRACT
 const SCORE_SCALE = ["#b91c1c", "#f97316", "#facc15", "#a3e635", "#16a34a", "#065f46"];   // bad → good (linear scores)
+// attractiveness: white → green, and see-through at the low end, so few amenities look like no colour at all
+const ATTRACT_SCALE = ["#f4fbc2", "#e3f39a", "#c2e699", "#8fd07e", "#5bb466", "#33964f"];
+const ATTRACT_CLEAR = 0.2;       // below this share of the scale the colour fades out
+const attractColor = t => rampColor(ATTRACT_SCALE, t).replace("rgb(", "rgba(").replace(")", `,${Math.min(1, t / ATTRACT_CLEAR).toFixed(2)})`);
 const SPLIT = "Split view";
 const dayLabel = () => ({ wd: "Weekday", sa: "Saturday", su: "Sunday" })[typeof tr === "undefined" ? "wd" : tr.day];
 
@@ -32,7 +43,7 @@ const SUBJECTS = {
   },
   transit: {
     title: "Departures", modes: ["total", "area", "person"],
-    unit: { total: "departures", area: "departures per km²", person: "departures per 1,000 inhabitants" },
+    unit: { total: "departures", area: "departures per km²", person: "departures per 1.000 inhabitants" },
     range: { total: [5, 5000], area: [5, 5000], person: [10, 10000] },
     note: () => `${dayLabel()}, 07–19 h · ${typeof tr === "undefined" ? "" : tr.modes.size + " types"}`,
     grid: (z, x, y, m) => `${API}/transit/supply/grid/${z}/${x}/${y}?` + new URLSearchParams({ day: tr.day, modes: [...tr.modes].join(","), per: m, size: gridSizeFor("transit"), v: dataInfo.transit_name }),
@@ -40,17 +51,24 @@ const SUBJECTS = {
     value: (a, m) => m === "total" ? a.dep : m === "area" ? (a.km2 ? a.dep / a.km2 : null) : a.population ? a.dep * 1000 / a.population : null,
   },
   amenities: {
-    title: "Amenities", modes: ["score", "within15", "proximity", "diversity", "local", "total", "area", "person"],
-    gridOnly: ["score", "within15", "proximity", "diversity", "local"],
-    linear: { score: [0, 100], within15: [0, 10], proximity: [30, 0], diversity: [0, 100], local: [0, 4] },   // [bad, good]
-    unit: { score: "amenity score 0–100 (grade 1–6)", within15: "groups within 15 min on foot (of 10)", proximity: "minutes to the 5 nearest, mean of the groups",
-      diversity: "evenness of the groups within 10 min (%)", local: "supermarket, pharmacy, doctor, school within 1 km (of 4)",
-      total: "places", area: "places per km²", person: "places per 1,000 inhabitants" },
+    title: "Amenities", modes: [...ATTRACT_MODES, "total", "area", "person"], gridOnly: ATTRACT_MODES,
+    linear: Object.fromEntries(ATTRACT_MODES.map(k => [k, [0, 100]])),   // [bad, good]
+    unit: { total: "places", area: "places per km²", person: "places per 1.000 inhabitants",
+      ...Object.fromEntries(ATTRACT_MODES.map(k => [k, "index 0–100: what is within 400 m"])) },
     range: { total: [1, 200], area: [1, 500], person: [1, 200] },
     note: () => typeof amenSel === "undefined" ? "" : `${amenSel.size} of 10 groups`,
-    grid: (z, x, y, m) => `${API}/amenities/grid/${z}/${x}/${y}?` + new URLSearchParams({ metric: m, groups: [...amenSel].join(","), size: gridSizeFor("amenities"), v: dataInfo.osm.join() }),
-    extra: (level, box) => fetch(`${API}/amenities/admin?` + new URLSearchParams({ level, ...box, groups: [...amenSel].join(",") })),
+    grid: (z, x, y, m) => `${API}/amenities/grid/${z}/${x}/${y}?` + new URLSearchParams({ metric: m, groups: amenGroupsParam(), size: gridSizeFor("amenities"), v: dataInfo.osm.join() }),
+    extra: (level, box) => fetch(`${API}/amenities/admin?` + new URLSearchParams({ level, ...box, groups: amenGroupsParam() })),
     value: (a, m) => m === "total" ? a.dep : m === "area" ? (a.km2 ? a.dep / a.km2 : null) : a.population ? a.dep * 1000 / a.population : null,
+  },
+  walk: {
+    title: "Walkability", modes: WALK_MODES, gridOnly: WALK_MODES,       // scores per square: no values for administrative areas
+    linear: { score: [0, 100], within15: [0, 10], proximity: [30, 0], diversity: [0, 100], local: [0, 4] },   // [bad, good]
+    unit: { score: "amenity score 0–100 (grade 1–6)", within15: "groups within 15 min on foot (of 10)", proximity: "minutes to the 5 nearest, mean of the groups",
+      diversity: "evenness of the groups within 10 min (%)", local: "supermarket, pharmacy, doctor, school within 1 km (of 4)" },
+    range: {},
+    grid: (z, x, y, m) => `${API}/amenities/grid/${z}/${x}/${y}?` + new URLSearchParams({ metric: m, size: gridSizeFor("walk"), v: dataInfo.osm.join() }),
+    value: () => null,
   },
 };
 
@@ -59,7 +77,11 @@ let splitSubject = SUBJECTS[store.get("splitSubject")] ? store.get("splitSubject
 let splitMode = store.get("splitMode", store.get("roadPer", "area"));
 let splitData = null, splitRange = null, splitCtl = null, splitTimer = 0, splitPopGrid = false, splitBusy = false;
 const subject = () => SUBJECTS[splitSubject];
-const mode = () => !subject().modes.includes(splitMode) || splitView !== "grid" && subject().gridOnly?.includes(splitMode) ? "area" : splitMode;
+const mode = () => {
+  const s = subject(), fallback = s.modes.includes("area") ? "area" : s.modes[0];
+  if (!s.modes.includes(splitMode)) return fallback;
+  return splitView !== "grid" && s.gridOnly?.includes(splitMode) && s.modes.includes("area") ? "area" : splitMode;
+};
 const linearNow = () => subject().linear?.[mode()];
 const splitOpacity = () => store.get("splitOpacity", store.get("roadOpacity", 0.7));
 const rangeNow = () => splitView !== "grid" && mode() === "total" && splitRange ? splitRange : subject().range[mode()];
@@ -67,13 +89,14 @@ const splitT = v => {
   const lin = linearNow(), [lo, hi] = lin || rangeNow();
   return Math.min(1, Math.max(0, lin ? (v - lo) / (hi - lo) : Math.log(v / lo) / Math.log(hi / lo)));     // linear [bad, good]: may run backwards
 };
-const splitColor = v => rampColor(linearNow() ? SCORE_SCALE : SPLIT_SCALE, splitT(v));
+const attractNow = () => ATTRACT_MODES.includes(mode());
+const splitColor = v => attractNow() ? attractColor(splitT(v)) : rampColor(linearNow() ? SCORE_SCALE : SPLIT_SCALE, splitT(v));
 const splitFmt = v => v == null ? dash : fmt(v, v < 10 ? 1 : 0);
 
 map.createPane("splitadmin").style.zIndex = 245;      // above the population grids, below slope and labels
 const splitGrid = new GridCellLayer({ minZoom: 6, maxNativeZoom: 16, maxZoom: 19, opacity: splitOpacity(), pane: "popdensity", spec: {
   url: (z, x, y) => subject().grid(z, x, y, mode()),
-  t: v => splitT(v), color: v => splitColor(v), show: v => v > 0, text: v => String(Math.round(v)),
+  t: v => splitT(v), color: v => splitColor(v), show: v => v > 0, text: v => splitFmt(v),
 } });
 const splitAdmin = L.layerGroup();
 const splitGroup = L.layerGroup([], { attribution: "Areas: © OpenStreetMap contributors" });   // the menu entry: grid or areas
@@ -130,7 +153,7 @@ $("split-row").addEventListener("click", e => {
   toggleAreaPicker(false);
   setSplitView(b.dataset.split);
   if (splitSubject === "transit" && typeof tr !== "undefined" && tr.on) return trSupply();
-  if (!Object.values(SUBJECT_QUERY).some(f => f($("q").value))) $("q").value = { population: "population", amenities: "amenities" }[splitSubject] || "roads";
+  if (!Object.values(SUBJECT_QUERY).some(f => f($("q").value))) $("q").value = { population: "population", amenities: "amenities", walk: "walkability" }[splitSubject] || "roads";
   search();
 });
 // the layer menu switches it on / off too
@@ -175,7 +198,7 @@ function renderSplitAreas() {
       fillColor: v > 0 ? splitColor(v) : "#bbb", fillOpacity: v > 0 ? op : op * 0.4 } });
     const from = a.level !== +splitView ? ` <small>(${SPLIT_LEVELS[a.level][0]}${a.level < +splitView ? ", no smaller units" : ""})</small>` : "";
     const info = `<b>${esc(a.name || "–")}</b>${from}<br>${splitFmt(v)} ${s.unit[m]}<br>
-      <small>${fmt(a.km2, 1)} km² · ${a.population == null ? "no population data" : a.population.toLocaleString() + " inhabitants"}</small>`;
+      <small>${fmt(a.km2, 1)} km² · ${a.population == null ? "no population data" : a.population.toLocaleString(NUM) + " inhabitants"}</small>`;
     poly.on("click", ev => {       // with the statistic open: its numbers for this area; else a short popup
       L.DomEvent.stop(ev);
       if (splitClickable()) setSplitFocus({ name: a.name || "–", geometry: a.geometry });
@@ -194,7 +217,7 @@ function renderSplitAreas() {
 // ---- click a square or an area: the statistic's panel shows its numbers ("focus"); × on the chip goes back to the view
 let splitFocus = null;
 const focusLayer = L.layerGroup().addTo(map);
-const SUBJECT_QUERY = { roads: q => isRoadsQuery(q), population: q => isPopulationQuery(q), amenities: q => isAmenityQuery(q) };
+const SUBJECT_QUERY = { roads: q => isRoadsQuery(q), population: q => isPopulationQuery(q), amenities: q => isAmenityQuery(q), walk: q => isWalkQuery(q) };
 const splitClickable = () => splitSubject === "transit" ? typeof tr !== "undefined" && tr.on && tr.view === "supply"
   : !/\b(trn|insp|lib|lu)-open\b/.test($("sidebar").className) && SUBJECT_QUERY[splitSubject]($("q").value);
 function setSplitFocus(f) {
@@ -205,7 +228,7 @@ function setSplitFocus(f) {
   if (splitSubject === "transit") trSupply(); else if ($("q").value.trim()) search();
 }
 map.on("click", async e => {
-  if (splitView !== "grid" || splitSubject === "amenities" || !splitClickable()) return;   // amenities: the rating of the place (amenities.js)
+  if (splitView !== "grid" || splitSubject === "amenities" || splitSubject === "walk" || !splitClickable()) return;   // the rating of the place (amenities.js)
   const tool = subject().grid ? splitSubject : "population", perPerson = splitSubject === "transit" && mode() === "person";
   const base = tool === "population" ? dataInfo.cell_m || 100 : perPerson ? 1000 : GRID_BASE[tool];
   const size = perPerson ? Math.max(gridSizeFor(tool), 1000) : gridSizeFor(tool);
@@ -232,16 +255,21 @@ function renderSplitLegend() {
     b.hidden = !s.modes.includes(b.dataset.m) || !!s.gridOnly?.includes(b.dataset.m);
   });
   $("split-method").hidden = !methods.length;
-  $("split-method").innerHTML = `<option value="">Count places …</option>` + methods.map(k => `<option value="${k}">${SPLIT_MODES[k]}</option>`).join("");
+  const opts = ks => ks.map(k => `<option value="${k}">${SPLIT_MODES[k]}</option>`).join("");
+  const counts = s.modes.includes("area");
+  $("split-method").innerHTML = (counts ? `<option value="">Count places …</option>` : "") + opts(methods);
   $("split-method").value = methods.includes(m) ? m : "";
-  const lin = linearNow(), pal = lin ? SCORE_SCALE : SPLIT_SCALE;
-  $("split-grad").style.background = `linear-gradient(to right, ${pal.map((c, i) => `${c} ${Math.round(i / (pal.length - 1) * 100)}%`).join(", ")})`;
+  $("split-mode").hidden = !s.modes.some(k => !s.gridOnly?.includes(k));
+  const lin = linearNow(), pal = attractNow() ? null : lin ? SCORE_SCALE : SPLIT_SCALE;
+  $("split-grad").style.background = pal ? `linear-gradient(to right, ${pal.map((c, i) => `${c} ${Math.round(i / (pal.length - 1) * 100)}%`).join(", ")})`
+    : `linear-gradient(to right, ${[0, .1, .2, .35, .5, .75, 1].map(t => `${attractColor(t)} ${t * 100}%`).join(", ")}), repeating-conic-gradient(#e5e7eb 0 25%, #fff 0 50%) 0 0 / 8px 8px`;
   const [lo, hi] = lin || rangeNow(), dyn = !lin && rangeNow() === splitRange, nice = v => Number(v.toPrecision(v < 10 ? 1 : 2));
   const ticks = m === "score" ? [0, 25, 50, 70, 90, 100] : lin ? [0, 1, 2, 3, 4].map(i => nice(lo + (hi - lo) * i / 4) || 0) : [0, 1, 2, 3, 4].map(i => nice(lo * (hi / lo) ** (i / 4))), last = ticks.at(-1);
-  $("split-ticks").innerHTML = ticks.map(v => `<span style="position:absolute;${v === last ? "right:0" : v === ticks[0] ? "left:0" : `left:${Math.round(splitT(v) * 100)}%;transform:translateX(-50%)`}">${v.toLocaleString()}${v === last && !dyn && !lin ? "+" : ""}</span>`).join("");
+  $("split-ticks").innerHTML = ticks.map(v => `<span style="position:absolute;${v === last ? "right:0" : v === ticks[0] ? "left:0" : `left:${Math.round(splitT(v) * 100)}%;transform:translateX(-50%)`}">${v.toLocaleString(NUM)}${v === last && !dyn && !lin ? "+" : ""}</span>`).join("");
   const where = SPLIT_LEVELS[splitView] ? SPLIT_LEVELS[splitView][0] : `grid ${gridSizeFor(splitSubject) ? sizeName(gridSizeFor(splitSubject)) : "(auto)"}`;
   $("split-title").textContent = `${s.title} · ${s.gridOnly?.includes(m) ? SPLIT_MODES[m] + " · " : ""}${where}`;
   $("split-note").textContent = s.unit[m] + (m === "total" && splitView === "grid" ? " per square" : "") + (s.note && !s.gridOnly?.includes(m) ? " · " + s.note() : "");
+  $("split-note").title = ATTRACT_MODES.includes(m) && typeof amenCat !== "undefined" && amenCat ? attractHint(m) : "";
 }
 legendHooks.push(() => {
   const on = map.hasLayer(splitGroup);

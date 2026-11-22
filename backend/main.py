@@ -1,4 +1,4 @@
-"""OSM tag search API.
+"""Spatial Analytics API.
 
 Run from the project root:
     venv/bin/uvicorn backend.main:app --reload
@@ -45,7 +45,7 @@ OVERPASS_URLS = ["https://overpass-api.de/api/interpreter",
                  "https://overpass.private.coffee/api/interpreter"]
 MAX_ONLINE_AREA = 1.0  # square degrees (~ a large city); bigger areas are refused
 
-app = FastAPI(title="OSM tag search")
+app = FastAPI(title="Spatial Analytics")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"])
 app.include_router(areas.router)
 app.include_router(taglib.router)

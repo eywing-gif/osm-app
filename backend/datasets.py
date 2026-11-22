@@ -29,7 +29,9 @@ def _query(db: str, sql: str, *args):
 
 
 def _tables(prefix: str, known: dict) -> list[str]:
-    names = _query(DB_POP, "SELECT tablename FROM pg_tables WHERE tablename LIKE %s", prefix + "\\_%")
+    # only complete grids: the index is built last (an interrupted import of an older version has none)
+    names = _query(DB_POP, """SELECT tablename FROM pg_tables t WHERE tablename LIKE %s
+                              AND EXISTS (SELECT 1 FROM pg_indexes i WHERE i.tablename = t.tablename AND i.indexdef ~* 'gist')""", prefix + "\\_%")
     return [n[len(prefix) + 1:] for n in names if n[len(prefix) + 1:] in known]
 
 
@@ -42,8 +44,11 @@ def installed_built() -> list[str]:
 
 
 def installed_transit() -> list[str]:
+    """Complete timetables only: not the one being imported, not one whose import stopped (the line levels are made last)."""
     names = _query("postgres", "SELECT datname FROM pg_database WHERE datname LIKE %s", PREFIX + "transit\\_%")
-    return [n[len(PREFIX) + 8:] for n in names if n[len(PREFIX) + 8:] in catalog.FEEDS]
+    busy = JOB.get("args", [None])[-1] if JOB and JOB["proc"].poll() is None else None
+    return [f for n in names if (f := n[len(PREFIX) + 8:]) in catalog.FEEDS and f != busy
+            and _query(db_transit_name(f), "SELECT 1 FROM pg_tables WHERE tablename = 'transit_edge_lvl'")]
 
 
 def outdated_transit(feed: str) -> bool:
@@ -61,6 +66,9 @@ def _active(kind: str, installed: list[str]):
     return a if a in installed else None
 
 
+OSM_DISK = 10        # map region on disk ≈ 10 × the .osm.pbf (the database ≈ 9 ×, measured, plus the download, which is kept)
+
+
 @router.get("")
 def overview():
     st = load_state()
@@ -71,10 +79,12 @@ def overview():
     pa, fa, ba = _active("population", pops), _active("transit", feeds), _active("built", builts)
     return {
         "osm": {"regions": [{**r, "bytes": have.get(r["id"]), "est": sizes.get(r["id"]), "active": r["id"] in built} for r in catalog.osm_regions()],
-                "built": built, "roads": bool(built) and _roads_ready()},
-        "population": [{"id": k, **v, "installed": k in pops, "active": k == pa} for k, v in catalog.POPULATION.items()],
-        "built": [{"id": k, **v, "installed": k in builts, "active": k == ba} for k, v in catalog.BUILT.items()],
-        "transit": [{"id": k, **v, "installed": k in feeds, "active": k == fa, "outdated": k in feeds and outdated_transit(k)}
+                "built": built, "roads": bool(built) and _roads_ready(), "outdated": bool(built) and amenities.prepared() and amenities.outdated()},
+        "osm_disk": OSM_DISK,
+        "population": [{"id": k, **v, "disk": catalog.disk_mb(v, 3), "installed": k in pops, "active": k == pa} for k, v in catalog.POPULATION.items()],
+        "built": [{"id": k, **v, "disk": catalog.disk_mb(v, 2), "installed": k in builts, "active": k == ba} for k, v in catalog.BUILT.items()],
+        "transit": [{"id": k, **{f: x for f, x in v.items() if f not in ("parts", "full")}, "disk": catalog.disk_mb(v),
+                     "installed": k in feeds, "active": k == fa, "outdated": k in feeds and outdated_transit(k)}
                     for k, v in catalog.FEEDS.items()],
         "job": job_status(),
     }
@@ -99,7 +109,27 @@ def active():
     ba = _active("built", installed_built())
     return {"osm": [names.get(i, i) for i in st.get("osm", {}).get("active", [])], "bbox": st.get("osm", {}).get("bbox"),
             "population_id": pa or "", "cell_m": pa and catalog.POPULATION[pa]["cell"], "population": pa and f"{catalog.POPULATION[pa]['name']} · {catalog.POPULATION[pa]['source']}", "transit_name": ta and catalog.FEEDS[ta]["name"],
-            "built_id": ba or "", "built_cell_m": ba and catalog.BUILT[ba]["cell"], "roads": _roads_ready()}
+            "built_id": ba or "", "built_cell_m": ba and catalog.BUILT[ba]["cell"], "roads": _roads_ready(),
+            # what may be missing or shown wrong (frontend: yellow hints): the area each data set covers, rail-only feeds, old builds
+            "pop_bbox": pa and catalog.POPULATION[pa].get("bbox"), "built_bbox": ba and catalog.BUILT[ba].get("bbox"),
+            "transit_bbox": ta and transit_bbox(ta), "transit_only": ta and catalog.FEEDS[ta].get("only"),
+            "transit_full": ta and catalog.FEEDS[ta].get("full"), "transit_outdated": bool(ta) and outdated_transit(ta),
+            "amenities_outdated": bool(st.get("osm", {}).get("active")) and amenities.prepared() and amenities.outdated()}
+
+
+_bbox: dict = {}
+
+
+def transit_bbox(feed: str):
+    """Area of a feed: from the catalog, else where most of its stations are (1 % cut off at each side: a few far stations)."""
+    if catalog.FEEDS[feed].get("bbox"):
+        return catalog.FEEDS[feed]["bbox"]
+    if feed not in _bbox:
+        r = _query(db_transit_name(feed), """SELECT ARRAY[percentile_cont(0.01) WITHIN GROUP (ORDER BY lon), percentile_cont(0.01) WITHIN GROUP (ORDER BY lat),
+                                                 percentile_cont(0.99) WITHIN GROUP (ORDER BY lon), percentile_cont(0.99) WITHIN GROUP (ORDER BY lat)]
+                                          FROM transit_station""")
+        _bbox[feed] = [round(v, 3) for v in r[0]] if r and r[0] and r[0][0] is not None else None
+    return _bbox[feed]
 
 
 def _roads_ready() -> bool:
@@ -112,6 +142,7 @@ def _roads_ready() -> bool:
 
 def clear_caches():
     """New data or a finished job: forget what was computed from the old one."""
+    _bbox.clear()
     for m in (transit, reach, roads, supply, amenities, population):
         m.clear_caches()
 
@@ -125,7 +156,7 @@ def start(title: str, *args: str):
     proc = subprocess.Popen([sys.executable, "-u", "-m", *args], cwd=ROOT, stdout=open(log, "w"), stderr=subprocess.STDOUT,
                             env={**os.environ, "PYTHONPATH": str(ROOT)})
     JOB.clear()
-    JOB.update(proc=proc, title=title, log=log, started=time.time(), done=False)
+    JOB.update(proc=proc, title=title, log=log, started=time.time(), done=False, args=args)
     return job_status()
 
 
@@ -142,7 +173,30 @@ def job_status():
     text = prog[2] if len(prog) > 2 else ""
     if state == "failed":
         text = next((l for l in reversed(lines) if l.strip() and not l.startswith("@") and not l.startswith(" ")), "failed")
-    return {"title": JOB["title"], "state": state, "pct": 100 if state == "done" else int(prog[1]), "text": text}
+    end = time.time() if rc is None else JOB["log"].stat().st_mtime
+    return {"title": JOB["title"], "state": state, "pct": 100 if state == "done" else int(prog[1]), "text": text,
+            "secs": round(end - JOB["started"]), "steps": _steps(lines, state, end)}
+
+
+def _steps(lines: list[str], state: str, end: float) -> list[dict]:
+    """The job's steps (lines "@steps a|b|c" and "@step <time> a" of pipeline/util.py): [{name, state, secs}]."""
+    names = next((l[7:].split("|") for l in lines if l.startswith("@steps ")), [])
+    started = {}
+    for l in lines:
+        if l.startswith("@step "):
+            _, t, name = l.split(" ", 2)
+            started[name] = float(t)
+    out, times = [], sorted(started.values())
+    for name in names:
+        t0 = started.get(name)
+        if t0 is None:
+            out.append({"name": name, "state": "todo"})
+            continue
+        t1 = next((t for t in times if t > t0), None)
+        last = t1 is None
+        st = "done" if not last or state == "done" else "run" if state == "running" else "stop"
+        out.append({"name": name, "state": st, "secs": round((t1 or end) - t0)})
+    return out
 
 
 @router.get("/job")

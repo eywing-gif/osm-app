@@ -1,7 +1,7 @@
 #!/bin/sh
-# Installs OSM Tag Search. In a terminal, in the app folder:   sh install.sh
+# Installs Spatial Analytics. In a terminal, in the app folder:   sh install.sh
 # It installs the system packages (asks for your password once), sets up the PostgreSQL database server,
-# creates the Python environment (venv/) and adds "OSM Tag Search" to the application menu.
+# creates the Python environment (venv/) and adds "Spatial Analytics" to the application menu.
 # Safe to run again at any time (e.g. after a system update): it only does what is missing.
 #   Options: -y (no questions)   --no-menu (no menu entry)
 set -e
@@ -59,7 +59,7 @@ ok "venv"
 
 # ---------- 4. menu entry ----------
 bold "4/5 Application menu"
-if [ "$MENU" = 1 ]; then sh install-desktop.sh >/dev/null && ok "OSM Tag Search"; else echo "    skipped"; fi
+if [ "$MENU" = 1 ]; then sh install-desktop.sh >/dev/null && ok "Spatial Analytics"; else echo "    skipped"; fi
 
 # ---------- 5. check ----------
 bold "5/5 Check"
@@ -68,6 +68,6 @@ if python3 -c 'import gi; gi.require_version("WebKit2", "4.1")' 2>/dev/null; the
 else
   echo "    ! WebKitGTK is missing: the app will open in your web browser instead of its own window."
 fi
-printf '\n\033[32mDone.\033[0m Start "OSM Tag Search" from the application menu, or:  python3 %s/app.py\n' "$APP_DIR"
+printf '\n\033[32mDone.\033[0m Start "Spatial Analytics" from the application menu, or:  python3 %s/app.py\n' "$APP_DIR"
 echo "First start: click ⚙ (Settings) and download the data you need (map, population, timetables)."
 echo "Remove it again:  sh $APP_DIR/uninstall.sh"

@@ -20,8 +20,8 @@ $("insp-btn").addEventListener("click", () => setInspect(!inspecting));
 $("insp-close").addEventListener("click", () => setInspect(false));
 map.on("pm:drawstart", () => setInspect(false));
 
-const fmtArea = m2 => m2 >= 1e6 ? (m2 / 1e6).toLocaleString(undefined, { maximumFractionDigits: 1 }) + " km²"
-  : m2 >= 1e4 ? (m2 / 1e4).toLocaleString(undefined, { maximumFractionDigits: 1 }) + " ha" : m2.toLocaleString() + " m²";
+const fmtArea = m2 => m2 >= 1e6 ? (m2 / 1e6).toLocaleString(NUM, { maximumFractionDigits: 1 }) + " km²"
+  : m2 >= 1e4 ? (m2 / 1e4).toLocaleString(NUM, { maximumFractionDigits: 1 }) + " ha" : m2.toLocaleString(NUM) + " m²";
 
 function inspectItem(it, i) {
   const rows = Object.entries(it.tags).sort().map(([k, v]) => {
@@ -43,15 +43,15 @@ const STAT_ROWS = [["avg_age", "Average age", " years"], ["pct_under18", "Under 
 function inspectBuilt(b) {
   if (!b) return "";
   return `<h4>Built-up · 1 km square</h4><div class="tags"><table>
-    <tr><td>Per person</td><td><b>${b.per_person == null ? "–" : b.per_person.toLocaleString()}</b> m²</td></tr>
+    <tr><td>Per person</td><td><b>${b.per_person == null ? "–" : b.per_person.toLocaleString(NUM)}</b> m²</td></tr>
     <tr><td>Share</td><td><b>${b.share}</b> %</td></tr></table><small>GHS-BUILT-S 2020</small></div>`;
 }
 function inspectPopulation(p) {
   if (!p) return "";
   const rows = STAT_ROWS.filter(([k]) => p.stats[k] != null).map(([k, label, unit]) => `<tr><td>${label}</td><td>${p.stats[k]}${unit}</td></tr>`).join("");
   return `<h4>Population · ${p.cell_m} m cell</h4><div class="tags"><table>
-    <tr><td>Inhabitants</td><td><b>${p.population.toLocaleString()}</b></td></tr>
-    <tr><td>Density</td><td><b>${p.density.toLocaleString()}</b> /km²</td></tr>${rows}</table>
+    <tr><td>Inhabitants</td><td><b>${p.population.toLocaleString(NUM)}</b></td></tr>
+    <tr><td>Density</td><td><b>${p.density.toLocaleString(NUM)}</b> /km²</td></tr>${rows}</table>
     <small>${esc(p.dataset)}</small></div>`;
 }
 

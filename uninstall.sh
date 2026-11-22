@@ -1,5 +1,5 @@
 #!/bin/sh
-# Removes OSM Tag Search. In a terminal, in the app folder:   sh uninstall.sh
+# Removes Spatial Analytics. In a terminal, in the app folder:   sh uninstall.sh
 # Deletes: the menu entry, the app's databases (map, population, timetables), the downloads (data/),
 # the Python environment (venv/) and – if you want – the app folder itself.
 # Keeps: the system packages (PostgreSQL, …), since other programs may use them (see the end).
@@ -19,10 +19,10 @@ ask() {        # ask "question" -> 0 for yes; default no
 ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 
 [ "$(id -u)" = 0 ] && { echo "Please run it as your normal user, without sudo:   sh uninstall.sh"; exit 1; }
-echo "This removes OSM Tag Search: menu entry, databases, downloads ($DATA) and venv/."
+echo "This removes Spatial Analytics: menu entry, databases, downloads ($DATA) and venv/."
 ask "Continue?" || { echo "Nothing removed."; exit 0; }
 
-rm -f "$HOME/.local/share/applications/osm-tag-search.desktop"
+rm -f "$HOME/.local/share/applications/spatial-analytics.desktop" "$HOME/.local/share/applications/osm-tag-search.desktop"
 update-desktop-database "$HOME/.local/share/applications" 2>/dev/null
 ok "menu entry"
 
@@ -36,7 +36,7 @@ else
   echo "  ! database server not reachable: databases not removed (osm, population, transit_*)"
 fi
 
-rm -rf "$DATA" "$APP_DIR/venv" "${XDG_CACHE_HOME:-$HOME/.cache}/osm-tag-search"
+rm -rf "$DATA" "$APP_DIR/venv" "${XDG_CACHE_HOME:-$HOME/.cache}/osm-tag-search" "${XDG_CACHE_HOME:-$HOME/.cache}/spatial-analytics"
 ok "downloads, venv, cache"
 
 if ask "Also delete the app folder $APP_DIR?"; then

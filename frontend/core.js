@@ -1,6 +1,7 @@
 /* Basics: API address, settings storage, sidebar, the map with its base maps. Plain script: the files share one scope and load in this order (see index.html). */
 const API = location.protocol.startsWith("http") ? "" : "http://localhost:8000";
 const $ = id => document.getElementById(id);
+const NUM = "de-DE";     // number format: 12.345,6
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // settings remembered between starts (may be unavailable, so always guarded)

@@ -3,7 +3,9 @@
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const API = location.protocol.startsWith("http") ? "" : "http://localhost:8000";
-  const mb = b => b >= 1e9 ? (b / 1e9).toFixed(1) + " GB" : Math.max(1, Math.round(b / 1e6)) + " MB";
+  const mb = b => b >= 1e9 ? (b / 1e9).toLocaleString("de-DE", { maximumFractionDigits: 1 }) + " GB" : Math.max(1, Math.round(b / 1e6)) + " MB";
+  // download size, and below it the space on disk once installed when that is much more (bytes)
+  const sizeCell = (down, disk) => !down ? "" : `<span class="size" title="Download ${mb(down)}${disk ? ` · about ${mb(disk)} on disk once installed` : ""}">${mb(down)}${disk && disk > 1.5 * down ? `<small>≈ ${mb(disk)} disk</small>` : ""}</span>`;
   const TABS = { osm: "Map", population: "Population", built: "Built-up", transit: "Transit", app: "App" };
   let app = null, latest = null, data = null, tab = "osm", poll = 0, sel = new Set(), open = new Set(), filter = "", wasRunning = false;
 
@@ -23,12 +25,15 @@
   }
 
   const busy = () => data.job?.state === "running";
+  const dur = s => s < 60 ? s + " s" : Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 
   function renderJob() {
     const j = data.job, el = $("set-job");
     el.className = "job" + (j ? " show" : "") + (j?.state === "failed" ? " failed" : "");
     if (!j) return;
-    el.innerHTML = `<div class="top"><b>${esc(j.title)}</b><span>${j.state === "running" ? j.pct + " %" : j.state}</span></div>
+    const steps = (j.steps || []).map(s => `<span class="${s.state}">${{ done: "✓", run: "●", stop: "✕", todo: "○" }[s.state]} ${esc(s.name)}${s.secs != null ? " " + dur(s.secs) : ""}</span>`).join("");
+    el.innerHTML = `<div class="top"><b>${esc(j.title)}</b><span>${j.state === "running" ? j.pct + " %" : j.state}${j.secs != null ? " · " + dur(j.secs) : ""}</span></div>
+      ${steps ? `<div class="steps">${steps}</div>` : ""}
       <div class="bar"><i style="width:${j.pct}%"></i></div>
       <div class="top"><small>${esc(j.text)}</small>${j.state === "running" ? '<button class="btn" data-a="cancel">Cancel</button>' : ""}</div>`;
   }
@@ -44,7 +49,7 @@
         <span class="caret" data-a="toggle" data-id="${esc(r.id)}">${n ? (open.has(r.id) ? "▾" : "▸") : ""}</span>
         <input type="checkbox" data-a="use" data-id="${esc(r.id)}" ${sel.has(r.id) ? "checked" : ""}>
         <span class="name">${esc(r.name)}${f ? `<small>${esc(r.id)}</small>` : ""}</span>
-        <span class="size">${r.bytes ? mb(r.bytes) : r.est ? mb(r.est) : ""}</span>
+        ${(b => b ? sizeCell(b, b * data.osm_disk) : '<span class="size"></span>')(r.bytes || r.est)}
         ${r.bytes ? `<button class="btn" data-a="del" data-id="${esc(r.id)}" ${busy() ? "disabled" : ""}>Delete</button>`
                   : `<button class="btn" data-a="get" data-id="${esc(r.id)}" ${busy() ? "disabled" : ""}>Download</button>`}
       </div>`;
@@ -72,16 +77,16 @@
     const missing = miss.length, missSize = miss.reduce((a, r) => a + (r.est || 0), 0);
     $("set-body").innerHTML = `<div class="empty" style="padding:0 0 6px">Map data for search, point info, roads. Download adds a region to the map; or tick several, then Apply.</div><input class="search" placeholder="Search region" value="${esc(filter)}" data-a="filter">${osmRows()}`;
     $("set-apply").innerHTML = `<span>${data.osm.built.length ? "Active: " + data.osm.built.map(i => esc(data.osm.regions.find(r => r.id === i)?.name ?? i)).join(", ") : "No map data"}</span>
-      ${data.osm.built.length && !data.osm.roads ? `<button class="btn" data-a="roads" title="Needed for Roads and Amenities" ${busy() ? "disabled" : ""}>Prepare analyses</button>` : ""}
+      ${data.osm.built.length && (!data.osm.roads || data.osm.outdated) ? `<button class="btn${data.osm.outdated ? " primary" : ""}" data-a="roads" title="${data.osm.outdated ? "Made with older amenity groups: prepare again" : "Needed for Roads and Amenities"}" ${busy() ? "disabled" : ""}>Prepare analyses</button>` : ""}
       ${data.osm.built.length ? `<button class="btn" data-a="osmupd" title="Newest map data for the regions in use" ${busy() ? "disabled" : ""}>Update</button>` : ""}
-      <button class="btn primary" data-a="apply" ${same || !sel.size || busy() ? "disabled" : ""}>Apply${missing ? ` · ${missing} to download${missSize ? " (" + mb(missSize) + ")" : ""}` : ""}</button>`;
+      <button class="btn primary" data-a="apply" ${same || !sel.size || busy() ? "disabled" : ""}>Apply${missing ? ` · ${missing} to download${missSize ? ` (${mb(missSize)} · ≈ ${mb(missSize * data.osm_disk)} disk)` : ""}` : ""}</button>`;
   }
 
   // ---- population grids, timetable feeds: one is active
   function renderList(kind) {
     $("set-body").innerHTML = data[kind].map(d => `<div class="row">
         <span class="name">${esc(d.name)}<small>${esc(d.why)}</small><small>${esc([d.source, d.detail].filter(Boolean).join(" · "))}</small></span>
-        <span class="size">${d.mb} MB</span>
+        ${sizeCell(d.mb * 1e6, d.disk * 1e6)}
         ${d.outdated ? '<span class="tag warn" title="Made by an older version: Reach needs an update">Old</span>' : ""}
         ${d.active ? '<span class="tag">Active</span>' : ""}
         ${d.installed ? (d.active ? "" : `<button class="btn" data-a="use1" data-id="${d.id}">Use</button>`)
@@ -106,7 +111,7 @@
     $("set-body").innerHTML = (broken ? `<div class="repair"><b>Something is missing</b>
         <span>Repair installs and starts it. It asks for your password.</span>
         <button class="btn primary" data-a="repair" ${busy() ? "disabled" : ""}>Repair</button></div>` : "")
-      + `<div class="row"><span class="name">Version<small>${esc(app.mode === "git" ? "git checkout" : "zip install")} · ${esc(app.repo)}</small></span>
+      + `<div class="row"><span class="name">Version<small>${esc(app.mode === "git" ? "git checkout" : "zip install")} · ${app.repo ? `<a href="https://github.com/${esc(app.repo)}" target="_blank" rel="noopener" title="Source code, versions, issues">GitHub</a>` : ""}</small></span>
         <b>${esc(app.version)}</b>
         ${updated ? '<button class="btn primary" data-a="restart">Restart</button>'
           : latest?.newer ? `<button class="btn primary" data-a="update" data-id="${esc(latest.latest)}" ${busy() ? "disabled" : ""}>Update to ${esc(latest.latest)}</button>`
@@ -217,4 +222,6 @@
     }).catch(() => {});
   });
   function close() { $("settings").classList.remove("open"); }
+  // from a hint on the map: Settings on the tab with the missing data
+  window.openSettings = t => { if (t && TABS[t]) tab = t; $("settings").classList.add("open"); load(true); };
 })();
